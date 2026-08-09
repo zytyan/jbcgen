@@ -1,8 +1,8 @@
-# Json解码器生成器
+# JSON 解码器生成器
 
-## 解码器分两级，主要针对C语言生成。
+## 解码器分层，主要针对 C 语言生成。
 
-- lexer & parser 已完成
+- annotation lexer/parser 与 Clang AST 前端
 - Schema IR: 仅有一个框架
 - Decode Plan IR： 无
 - Generator: 无

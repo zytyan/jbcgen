@@ -8,7 +8,7 @@ Python部分用于生成解析器、字节码和读取对应的文档属性，�
 
 当前假设目标架构为64位，不同整数位数固定。换用libtooling后可以从`compile_commands.json`中获得实际整数大小。
 
-### annoation_parser 
+### annotation_parser
 具体内容见目录内README。
 
 ## C部分
