@@ -1,5 +1,5 @@
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 typedef int32_t i32;
 
@@ -15,16 +15,17 @@ typedef struct User {
   uint32_t id; /// @json
   /**
    * @json(key=name,
-   * maxlen=100)
+   *    maxlen=100, 
+   *    )
    */
   char *name;
-  //
-  // @json(
-  //      min=18
-  // )
-  //
+  ///
+  /// @json(
+  ///      min=18,max=200
+  /// )
+  ///
   uint8_t age;
-  /// @json(type=array, lenfield=lasesLen)
+  /// @json(type=array, len=basesLen)
   City *bases;
   size_t basesLen;
 } User;
