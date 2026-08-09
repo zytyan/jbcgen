@@ -3,7 +3,7 @@ import unittest
 from annotation_parser.annotations import parse_annotations
 from annotation_parser.clang_frontend import AstField, AstRecord, AstTypedef, TranslationUnit
 from annotation_parser.diagnostics import AnnotationError, SourceLocation
-from annotation_parser.schema_ir import TypeKind, build_schema_ir, format_schema_ir
+from annotation_parser.schema_ir import RecordShape, TypeKind, build_schema_ir, format_schema_ir
 
 
 LOCATION = SourceLocation("input.h", 1, 1)
@@ -94,6 +94,101 @@ class SchemaIrTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(AnnotationError, "minlen/maxlen require"):
             build_schema_ir(unit((root,)))
+
+    def test_builds_array_record_storage_variants_and_marks_ignored_fields(self) -> None:
+        annotations = (
+            "@jsonStruct(asarray, elems=elems, len=len, cap=cap)",
+            "@jsonStruct(asarray, elems=elems, len=len)",
+            "@jsonStruct(asarray, elems=elems, cap=cap)",
+            "@jsonStruct(asarray, elems=elems)",
+        )
+        for index, annotation in enumerate(annotations):
+            name = f"Vec{index}"
+            record = AstRecord(
+                name,
+                name,
+                (
+                    field("elems", "int *"),
+                    field("len", "unsigned short"),
+                    field("cap", "unsigned int"),
+                    field("reserved", "int"),
+                ),
+                parse_annotations(annotation, LOCATION),
+                LOCATION,
+            )
+            with self.subTest(annotation=annotation):
+                schema = build_schema_ir(unit((record,)))
+                result = schema.record_map()[f"record:{name}"]
+                storage = result.array_storage
+                self.assertEqual(result.shape, RecordShape.ARRAY)
+                self.assertIsNotNone(storage)
+                assert storage is not None
+                self.assertEqual(storage.elems_field, "elems")
+                self.assertEqual(storage.element_type_id, "integer:i32")
+                self.assertEqual(storage.length_field, "len" if "len=len" in annotation else None)
+                self.assertEqual(storage.capacity_field, "cap" if "cap=cap" in annotation else None)
+                self.assertTrue(next(item for item in result.fields if item.name == "reserved").ignored)
+                self.assertIn("array record", format_schema_ir(schema))
+                self.assertIn("[ignored]", format_schema_ir(schema))
+
+    def test_array_record_without_count_rejects_resource_elements(self) -> None:
+        record = AstRecord(
+            "strings",
+            "Strings",
+            (field("elems", "char **"),),
+            parse_annotations("@jsonStruct(asarray, elems=elems)", LOCATION),
+            LOCATION,
+        )
+        with self.assertRaisesRegex(AnnotationError, "without len or cap"):
+            build_schema_ir(unit((record,)))
+
+    def test_rejects_invalid_array_record_storage(self) -> None:
+        cases = (
+            (
+                (field("elems", "int *"),),
+                "@jsonStruct(asarray, elems=missing)",
+                "missing field",
+            ),
+            (
+                (field("elems", "int *"),),
+                "@jsonStruct(asarray, elems=elems, len=elems)",
+                "must be distinct",
+            ),
+            (
+                (field("elems", "int *"), field("len", "int")),
+                "@jsonStruct(asarray, elems=elems, len=len)",
+                "len field must be an unsigned integer",
+            ),
+            (
+                (field("elems", "int"),),
+                "@jsonStruct(asarray, elems=elems)",
+                "must be a non-void pointer",
+            ),
+        )
+        for fields, annotation, message in cases:
+            record = AstRecord(
+                "vec", "Vec", fields, parse_annotations(annotation, LOCATION), LOCATION
+            )
+            with self.subTest(annotation=annotation), self.assertRaisesRegex(AnnotationError, message):
+                build_schema_ir(unit((record,)))
+
+    def test_rejects_flattening_an_array_record(self) -> None:
+        vector = AstRecord(
+            "vec",
+            "Vec",
+            (field("elems", "int *"),),
+            parse_annotations("@jsonStruct(asarray, elems=elems)", LOCATION),
+            LOCATION,
+        )
+        root = AstRecord(
+            "root",
+            "Root",
+            (field("values", "struct Vec", "@json(flatten)"),),
+            parse_annotations("@jsonStruct", LOCATION),
+            LOCATION,
+        )
+        with self.assertRaisesRegex(AnnotationError, "cannot be flattened"):
+            build_schema_ir(unit((vector, root)))
 
 
 if __name__ == "__main__":

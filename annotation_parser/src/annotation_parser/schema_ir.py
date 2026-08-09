@@ -22,6 +22,11 @@ class TypeKind(Enum):
     RECORD = "record"
 
 
+class RecordShape(Enum):
+    OBJECT = "object"
+    ARRAY = "array"
+
+
 @dataclass(frozen=True)
 class TypeSchema:
     id: str
@@ -51,6 +56,15 @@ class FieldSchema:
     max_length: int | None
     owns_resources: bool
     location: SourceLocation
+    ignored: bool = False
+
+
+@dataclass(frozen=True)
+class ArrayStorageSchema:
+    elems_field: str
+    element_type_id: str
+    length_field: str | None
+    capacity_field: str | None
 
 
 @dataclass(frozen=True)
@@ -62,6 +76,8 @@ class RecordSchema:
     public: bool
     owns_resources: bool
     location: SourceLocation
+    shape: RecordShape = RecordShape.OBJECT
+    array_storage: ArrayStorageSchema | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +133,15 @@ def _json_annotation(annotations: tuple[Annotation, ...], location: SourceLocati
     selected = [annotation for annotation in annotations if annotation.name == "json"]
     if len(selected) > 1:
         raise AnnotationError("a declaration may contain only one @json annotation", location)
+    return selected[0] if selected else None
+
+
+def _json_struct_annotation(
+    annotations: tuple[Annotation, ...], location: SourceLocation
+) -> Annotation | None:
+    selected = [annotation for annotation in annotations if annotation.name == "jsonStruct"]
+    if len(selected) > 1:
+        raise AnnotationError("a declaration may contain only one @jsonStruct annotation", location)
     return selected[0] if selected else None
 
 
@@ -200,7 +225,11 @@ class SchemaBuilder:
         while changed:
             changed = False
             for record in records:
-                owns = any(self._field_owns(field.type_id, ownership) for field in record.fields)
+                owns = record.shape is RecordShape.ARRAY or any(
+                    self._field_owns(field.type_id, ownership)
+                    for field in record.fields
+                    if not field.ignored
+                )
                 if owns != ownership[record.id]:
                     ownership[record.id] = owns
                     changed = True
@@ -209,12 +238,29 @@ class SchemaBuilder:
                 record,
                 owns_resources=ownership[record.id],
                 fields=tuple(
-                    replace(field, owns_resources=self._field_owns(field.type_id, ownership))
+                    replace(
+                        field,
+                        owns_resources=(
+                            False if field.ignored else self._field_owns(field.type_id, ownership)
+                        ),
+                    )
                     for field in record.fields
                 ),
             )
             for record in records
         )
+        for record in records:
+            storage = record.array_storage
+            if (
+                storage is not None
+                and storage.length_field is None
+                and storage.capacity_field is None
+                and self._field_owns(storage.element_type_id, ownership)
+            ):
+                raise AnnotationError(
+                    "an array record without len or cap requires a trivially releasable element type",
+                    record.location,
+                )
         return SchemaIR(
             tuple(sorted(self.types.values(), key=lambda item: item.id)),
             records,
@@ -247,50 +293,112 @@ class SchemaBuilder:
         record_id = f"record:{name}"
         if record_id in self.built_records:
             return self.built_records[record_id]
-        if name in self.building_records:
-            placeholder = RecordSchema(record_id, name, f"struct {name}", (), name in public_names, False,
-                                       self.records_by_name[name].location)
-            self.built_records.setdefault(record_id, placeholder)
-            return placeholder
         ast_record = self.records_by_name.get(name)
         if ast_record is None:
             raise AnnotationError(f"record {name!r} has no complete definition")
+        c_type = ast_record.c_type or f"struct {name}"
+        if name in self.building_records:
+            placeholder = RecordSchema(
+                record_id, name, c_type, (), name in public_names, False, ast_record.location
+            )
+            self.built_records.setdefault(record_id, placeholder)
+            return placeholder
         self.building_records.add(name)
-        self.types.setdefault(record_id, TypeSchema(record_id, TypeKind.RECORD, f"struct {name}"))
+        self.types.setdefault(record_id, TypeSchema(record_id, TypeKind.RECORD, c_type))
         fields = [self._build_field(field) for field in ast_record.fields]
 
+        struct_annotation = _json_struct_annotation(ast_record.annotations, ast_record.location)
+        is_array = _flag(struct_annotation, "asarray")
+        array_storage = self._build_array_storage(ast_record, fields, struct_annotation) if is_array else None
+
         names = {field.name: field for field in fields}
-        length_fields = {field.length_field for field in fields if field.length_field is not None}
-        for owner in fields:
-            if owner.length_field is None:
-                continue
-            companion = names.get(owner.length_field)
-            if companion is None:
-                raise AnnotationError(
-                    f"array field {owner.name!r} references missing length field {owner.length_field!r}",
-                    owner.location,
-                )
-            companion_type = self.types[companion.type_id]
-            if companion_type.kind is not TypeKind.INTEGER or companion_type.signed:
-                raise AnnotationError("array length field must be an unsigned integer", companion.location)
-        fields = [replace(field, is_length_metadata=field.name in length_fields) for field in fields]
-        for field in fields:
-            if field.is_length_metadata and field.required:
-                raise AnnotationError("an array length metadata field cannot be required", field.location)
+        if is_array:
+            storage_names = {
+                array_storage.elems_field,
+                array_storage.length_field,
+                array_storage.capacity_field,
+            }
+            storage_names.discard(None)
+            fields = [replace(field, ignored=field.name not in storage_names) for field in fields]
+        else:
+            length_fields = {field.length_field for field in fields if field.length_field is not None}
+            for owner in fields:
+                if owner.length_field is None:
+                    continue
+                companion = names.get(owner.length_field)
+                if companion is None:
+                    raise AnnotationError(
+                        f"array field {owner.name!r} references missing length field {owner.length_field!r}",
+                        owner.location,
+                    )
+                companion_type = self.types[companion.type_id]
+                if companion_type.kind is not TypeKind.INTEGER or companion_type.signed:
+                    raise AnnotationError("array length field must be an unsigned integer", companion.location)
+            fields = [replace(field, is_length_metadata=field.name in length_fields) for field in fields]
+            for field in fields:
+                if field.is_length_metadata and field.required:
+                    raise AnnotationError("an array length metadata field cannot be required", field.location)
 
         schema = RecordSchema(
             record_id,
             name,
-            f"struct {name}",
+            c_type,
             tuple(fields),
             name in public_names,
-            any(field.owns_resources for field in fields),
+            is_array or any(field.owns_resources for field in fields),
             ast_record.location,
+            RecordShape.ARRAY if is_array else RecordShape.OBJECT,
+            array_storage,
         )
         self.built_records[record_id] = schema
         self.building_records.remove(name)
-        self._validate_keys(schema)
+        if schema.shape is RecordShape.OBJECT:
+            self._validate_keys(schema)
         return schema
+
+    def _build_array_storage(
+        self,
+        ast_record: AstRecord,
+        fields: list[FieldSchema],
+        annotation: Annotation | None,
+    ) -> ArrayStorageSchema:
+        names = {field.name: field for field in fields}
+        elems_name = _one(annotation, "elems")
+        assert elems_name is not None  # Enforced by annotation validation.
+        length_name = _one(annotation, "len")
+        capacity_name = _one(annotation, "cap")
+        references = [name for name in (elems_name, length_name, capacity_name) if name is not None]
+        if len(set(references)) != len(references):
+            raise AnnotationError("array record elems, len, and cap fields must be distinct", ast_record.location)
+        for field_name in references:
+            if field_name not in names:
+                raise AnnotationError(
+                    f"array record references missing field {field_name!r}", ast_record.location
+                )
+
+        ast_fields = {field.name: field for field in ast_record.fields}
+        elems_ast = ast_fields[elems_name]
+        element_type_id = self._resolve_array_element_type(elems_ast)
+        for role, field_name in (("len", length_name), ("cap", capacity_name)):
+            if field_name is None:
+                continue
+            field = names[field_name]
+            field_type = self.types[field.type_id]
+            if field_type.kind is not TypeKind.INTEGER or field_type.signed:
+                raise AnnotationError(
+                    f"array record {role} field must be an unsigned integer", field.location
+                )
+        return ArrayStorageSchema(elems_name, element_type_id, length_name, capacity_name)
+
+    def _resolve_array_element_type(self, field: AstField) -> str:
+        text = re.sub(r"\b(const|volatile|restrict)\b", "", field.type_name).strip()
+        text = re.sub(r"\s+", " ", text)
+        if not text.endswith("*"):
+            raise AnnotationError("array record elems field must be a non-void pointer", field.location)
+        pointee = text[:-1].strip()
+        if pointee == "void":
+            raise AnnotationError("array record elems field must be a non-void pointer", field.location)
+        return self._resolve_type(pointee, None, field.location)
 
     def _build_field(self, field: AstField) -> FieldSchema:
         annotation = _json_annotation(field.annotations, field.location)
@@ -324,6 +432,9 @@ class SchemaBuilder:
                 raise AnnotationError("required cannot be combined with flatten", field.location)
             if type_schema.kind is not TypeKind.RECORD:
                 raise AnnotationError("flatten requires a by-value structure field", field.location)
+            nested = self.built_records.get(type_id)
+            if nested is not None and nested.shape is RecordShape.ARRAY:
+                raise AnnotationError("an array-shaped record cannot be flattened", field.location)
             if any(_one(annotation, name) is not None for name in ("key", "len", "min", "max", "minlen", "maxlen")):
                 raise AnnotationError("flatten cannot be combined with key, len, or constraints", field.location)
 
@@ -471,7 +582,18 @@ def format_schema_ir(schema: SchemaIR) -> str:
         if record.owns_resources:
             attributes.append("owns-resources")
         suffix = f" [{', '.join(attributes)}]" if attributes else ""
-        lines.append(f"  record {record.id}{suffix}")
+        lines.append(f"  {record.shape.value} record {record.id}{suffix} c-type={record.c_type!r}")
+        if record.array_storage is not None:
+            storage = record.array_storage
+            mappings = [
+                f"elems={storage.elems_field}",
+                f"element={storage.element_type_id}",
+            ]
+            if storage.length_field is not None:
+                mappings.append(f"len={storage.length_field}")
+            if storage.capacity_field is not None:
+                mappings.append(f"cap={storage.capacity_field}")
+            lines.append("    array-storage " + " ".join(mappings))
         for field in record.fields:
             field_type = type_map[field.type_id]
             flags: list[str] = []
@@ -483,6 +605,8 @@ def format_schema_ir(schema: SchemaIR) -> str:
                 flags.append("length-metadata")
             if field.owns_resources:
                 flags.append("owns-resources")
+            if field.ignored:
+                flags.append("ignored")
             suffix = f" [{', '.join(flags)}]" if flags else ""
             lines.append(f"    field {field.name}: {field_type.id} key={field.key!r}{suffix}")
             if field.altkeys:

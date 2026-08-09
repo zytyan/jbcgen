@@ -40,6 +40,35 @@ class ClangFrontendTest(unittest.TestCase):
             {"jsonDecode", "jsonCleanup"},
         )
 
+    def test_extracts_named_and_anonymous_array_record_typedefs(self) -> None:
+        source = textwrap.dedent(
+            """
+            #include <stddef.h>
+            /// @jsonStruct(asarray, elems=elems, len=len)
+            typedef struct NamedVec {
+              int *elems;
+              size_t len;
+            } NamedVec;
+
+            /// @jsonStruct(asarray, elems=elems, cap=cap)
+            typedef struct {
+              int *elems;
+              size_t cap;
+            } AnonymousVec;
+            """
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            header = Path(directory) / "input.h"
+            header.write_text(source, encoding="utf-8")
+            unit = ClangFrontend().parse(header)
+
+        named = next(record for record in unit.records if record.name == "NamedVec")
+        anonymous = next(record for record in unit.records if record.name == "AnonymousVec")
+        self.assertEqual(named.c_type, "struct NamedVec")
+        self.assertEqual(anonymous.c_type, "AnonymousVec")
+        self.assertEqual(named.annotations[0].values("len"), ("len",))
+        self.assertEqual(anonymous.annotations[0].values("cap"), ("cap",))
+
 
 if __name__ == "__main__":
     unittest.main()

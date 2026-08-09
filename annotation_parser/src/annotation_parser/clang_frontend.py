@@ -34,6 +34,7 @@ class AstRecord:
     fields: tuple[AstField, ...]
     annotations: tuple[Annotation, ...]
     location: SourceLocation
+    c_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -231,12 +232,28 @@ class ClangFrontend:
         functions: list[AstFunction] = []
         seen: set[str] = set()
 
+        owned_records: dict[str, tuple[str, dict[str, Any]]] = {}
+        for node in _walk(root):
+            if node.get("kind") != "TypedefDecl" or not node.get("name"):
+                continue
+            for type_node in _walk(node):
+                owned = type_node.get("ownedTagDecl")
+                if isinstance(owned, dict) and owned.get("id"):
+                    owned_records[owned["id"]] = (node["name"], node)
+                    break
+
         for node in _walk(root):
             node_id = node.get("id", "")
             kind = node.get("kind")
             if not node_id or node_id in seen:
                 continue
-            if kind == "RecordDecl" and node.get("completeDefinition") and node.get("name"):
+            if kind == "RecordDecl" and node.get("completeDefinition"):
+                tag_name = node.get("name")
+                typedef_info = owned_records.get(node_id)
+                typedef_name = typedef_info[0] if typedef_info else None
+                record_name = tag_name or typedef_name
+                if not record_name:
+                    continue
                 seen.add(node_id)
                 fields: list[AstField] = []
                 for child in node.get("inner", ()):
@@ -253,13 +270,17 @@ class ClangFrontend:
                             _location(child, input_file),
                         )
                     )
+                annotations = _node_annotations(node, input_file, source)
+                if not annotations and typedef_info is not None:
+                    annotations = _node_annotations(typedef_info[1], input_file, source)
                 records.append(
                     AstRecord(
                         node_id,
-                        node["name"],
+                        record_name,
                         tuple(fields),
-                        _node_annotations(node, input_file, source),
+                        annotations,
                         _location(node, input_file),
+                        f"struct {tag_name}" if tag_name else typedef_name,
                     )
                 )
             elif kind == "TypedefDecl" and node.get("name"):
