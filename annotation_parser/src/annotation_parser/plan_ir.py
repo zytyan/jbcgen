@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from .schema_ir import FieldSchema, RecordSchema, SchemaIR, TypeKind
+from .schema_ir import FieldSchema, RecordSchema, RecordShape, SchemaIR, TypeKind
 
 
 class DecodeOperation(Enum):
@@ -47,6 +47,7 @@ class DecodeFieldPlan:
     maximum: str | None
     min_length: int | None
     max_length: int | None
+    length_type_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,18 @@ class DecodeObjectPlan:
     record_id: str
     fields: tuple[DecodeFieldPlan, ...]
     required_seen: tuple[int, ...]
+    rollback_record_id: str
+
+
+@dataclass(frozen=True)
+class DecodeArrayPlan:
+    record_id: str
+    elems_path: tuple[str, ...]
+    element: DecodeValuePlan
+    length_path: tuple[str, ...] | None
+    length_type_id: str | None
+    capacity_path: tuple[str, ...] | None
+    capacity_type_id: str | None
     rollback_record_id: str
 
 
@@ -67,6 +80,7 @@ class DecodeEntryPlan:
 class DecodePlan:
     values: tuple[DecodeValuePlan, ...]
     objects: tuple[DecodeObjectPlan, ...]
+    arrays: tuple[DecodeArrayPlan, ...]
     entries: tuple[DecodeEntryPlan, ...]
 
 
@@ -88,6 +102,17 @@ class ReleaseObjectPlan:
 
 
 @dataclass(frozen=True)
+class ReleaseArrayPlan:
+    record_id: str
+    elems_path: tuple[str, ...]
+    element_type_id: str
+    length_path: tuple[str, ...] | None
+    capacity_path: tuple[str, ...] | None
+    release_elements: bool
+    clear_after_release: bool
+
+
+@dataclass(frozen=True)
 class ReleaseEntryPlan:
     function_name: str
     record_id: str | None
@@ -96,6 +121,7 @@ class ReleaseEntryPlan:
 @dataclass(frozen=True)
 class ReleasePlan:
     objects: tuple[ReleaseObjectPlan, ...]
+    arrays: tuple[ReleaseArrayPlan, ...]
     entries: tuple[ReleaseEntryPlan, ...]
 
 
@@ -150,6 +176,11 @@ def _decode_fields(
                 field.maximum,
                 field.min_length,
                 field.max_length,
+                (
+                    next(item for item in record.fields if item.name == field.length_field).type_id
+                    if field.length_field
+                    else None
+                ),
             )
         )
     return result
@@ -158,7 +189,25 @@ def _decode_fields(
 def build_decode_plan(schema: SchemaIR) -> DecodePlan:
     values = tuple(_decode_value(item.id, schema) for item in schema.types)
     objects: list[DecodeObjectPlan] = []
+    arrays: list[DecodeArrayPlan] = []
     for record in schema.records:
+        if record.shape is RecordShape.ARRAY:
+            storage = record.array_storage
+            assert storage is not None
+            fields = {field.name: field for field in record.fields}
+            arrays.append(
+                DecodeArrayPlan(
+                    record.id,
+                    (storage.elems_field,),
+                    _decode_value(storage.element_type_id, schema),
+                    (storage.length_field,) if storage.length_field else None,
+                    fields[storage.length_field].type_id if storage.length_field else None,
+                    (storage.capacity_field,) if storage.capacity_field else None,
+                    fields[storage.capacity_field].type_id if storage.capacity_field else None,
+                    record.id,
+                )
+            )
+            continue
         fields = _decode_fields(record, schema)
         indexed = tuple(
             DecodeFieldPlan(
@@ -172,6 +221,7 @@ def build_decode_plan(schema: SchemaIR) -> DecodePlan:
                 field.maximum,
                 field.min_length,
                 field.max_length,
+                field.length_type_id,
             )
             for index, field in enumerate(fields)
         )
@@ -188,7 +238,7 @@ def build_decode_plan(schema: SchemaIR) -> DecodePlan:
         for function in schema.functions
         if function.role == "jsonDecode"
     )
-    return DecodePlan(values, tuple(objects), entries)
+    return DecodePlan(values, tuple(objects), tuple(arrays), entries)
 
 
 def _release_operation(field: FieldSchema, schema: SchemaIR) -> ReleaseOperation | None:
@@ -211,7 +261,23 @@ def _release_operation(field: FieldSchema, schema: SchemaIR) -> ReleaseOperation
 def build_release_plan(schema: SchemaIR) -> ReleasePlan:
     type_map = schema.type_map()
     objects: list[ReleaseObjectPlan] = []
+    arrays: list[ReleaseArrayPlan] = []
     for record in schema.records:
+        if record.shape is RecordShape.ARRAY:
+            storage = record.array_storage
+            assert storage is not None
+            arrays.append(
+                ReleaseArrayPlan(
+                    record.id,
+                    (storage.elems_field,),
+                    storage.element_type_id,
+                    (storage.length_field,) if storage.length_field else None,
+                    (storage.capacity_field,) if storage.capacity_field else None,
+                    _type_owns(storage.element_type_id, schema),
+                    True,
+                )
+            )
+            continue
         fields: list[ReleaseFieldPlan] = []
         for field in record.fields:
             if field.is_length_metadata:
@@ -236,7 +302,18 @@ def build_release_plan(schema: SchemaIR) -> ReleasePlan:
         for function in schema.functions
         if function.role == "jsonCleanup"
     )
-    return ReleasePlan(tuple(objects), entries)
+    return ReleasePlan(tuple(objects), tuple(arrays), entries)
+
+
+def _type_owns(type_id: str, schema: SchemaIR) -> bool:
+    item = schema.type_map()[type_id]
+    if item.kind in {TypeKind.STRING, TypeKind.DYNAMIC_ARRAY, TypeKind.POINTER}:
+        return item.capacity is None
+    if item.kind is TypeKind.FIXED_ARRAY and item.target is not None:
+        return _type_owns(item.target, schema)
+    if item.kind is TypeKind.RECORD:
+        return schema.record_map()[item.id].owns_resources
+    return False
 
 
 def _path(path: tuple[str, ...]) -> str:
@@ -272,6 +349,20 @@ def format_decode_plan(plan: DecodePlan) -> str:
                 lines.append("      constraints " + ", ".join(constraints))
         if obj.required_seen:
             lines.append("    require-seen " + ", ".join(map(str, obj.required_seen)))
+    for array in plan.arrays:
+        lines.append(f"  array record {array.record_id} rollback={array.rollback_record_id}")
+        lines.append(
+            f"    elems {_path(array.elems_path)} element={array.element.type_id} "
+            f"op={array.element.operation.value} delayed-allocation"
+        )
+        if array.length_path:
+            lines.append(
+                f"    write-length {_path(array.length_path)} type={array.length_type_id}"
+            )
+        if array.capacity_path:
+            lines.append(
+                f"    write-capacity {_path(array.capacity_path)} type={array.capacity_type_id}"
+            )
     for entry in plan.entries:
         lines.append(f"  entry {entry.function_name} -> {entry.record_id or '?'}")
     return "\n".join(lines)
@@ -289,6 +380,19 @@ def format_release_plan(plan: ReleasePlan) -> str:
             lines.append(line)
             if field.length_path:
                 lines.append(f"      read-length {_path(field.length_path)}")
+    for array in plan.arrays:
+        source = (
+            f"len:{_path(array.length_path)}"
+            if array.length_path
+            else f"cap:{_path(array.capacity_path)}"
+            if array.capacity_path
+            else "trivial-only"
+        )
+        behavior = "release-elements" if array.release_elements else "free-buffer"
+        lines.append(f"  array record {array.record_id} clear count={source} {behavior}")
+        lines.append(
+            f"    elems {_path(array.elems_path)} element={array.element_type_id}"
+        )
     for entry in plan.entries:
         lines.append(f"  entry {entry.function_name} -> {entry.record_id or '?'}")
     return "\n".join(lines)

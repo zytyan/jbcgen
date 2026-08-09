@@ -95,6 +95,41 @@ class PlanIrTest(unittest.TestCase):
         self.assertEqual(len(release.objects), 1)
         self.assertEqual(release.objects[0].fields[0].operation, ReleaseOperation.POINTER)
 
+    def test_array_record_plans_are_separate_and_show_storage_behavior(self) -> None:
+        vector = AstRecord(
+            "strings",
+            "Strings",
+            (
+                field("elems", "char **"),
+                field("cap", "unsigned short"),
+                field("ignored", "int"),
+            ),
+            parse_annotations("@jsonStruct(asarray, elems=elems, cap=cap)", LOCATION),
+            LOCATION,
+        )
+        schema = build_schema_ir(
+            TranslationUnit(
+                Path("strings.h"),
+                (vector,),
+                (AstTypedef("td", "Strings", "struct Strings", None, LOCATION),),
+                (),
+                (),
+            )
+        )
+        decode = build_decode_plan(schema)
+        release = build_release_plan(schema)
+
+        self.assertEqual(decode.objects, ())
+        self.assertEqual(len(decode.arrays), 1)
+        self.assertEqual(decode.arrays[0].element.operation, DecodeOperation.STRING)
+        self.assertEqual(decode.arrays[0].capacity_path, ("cap",))
+        self.assertEqual(release.objects, ())
+        self.assertTrue(release.arrays[0].release_elements)
+        self.assertEqual(release.arrays[0].capacity_path, ("cap",))
+        self.assertIn("array record record:Strings", format_decode_plan(decode))
+        self.assertIn("write-capacity cap", format_decode_plan(decode))
+        self.assertIn("count=cap:cap release-elements", format_release_plan(release))
+
 
 if __name__ == "__main__":
     unittest.main()

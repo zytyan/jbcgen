@@ -6,15 +6,17 @@ from dataclasses import dataclass
 
 from .diagnostics import AnnotationError
 from .plan_ir import (
+    DecodeArrayPlan,
     DecodeFieldPlan,
     DecodeObjectPlan,
     DecodeOperation,
     DecodePlan,
     ReleaseFieldPlan,
+    ReleaseArrayPlan,
     ReleaseOperation,
     ReleasePlan,
 )
-from .schema_ir import FieldSchema, RecordSchema, SchemaIR, TypeKind
+from .schema_ir import FieldSchema, RecordSchema, RecordShape, SchemaIR, TypeKind
 
 
 def _c_string(value: str) -> str:
@@ -41,7 +43,9 @@ class CGenerator:
         self.types = schema.type_map()
         self.records = schema.record_map()
         self.decode_objects = {item.record_id: item for item in decode_plan.objects}
+        self.decode_arrays = {item.record_id: item for item in decode_plan.arrays}
         self.release_objects = {item.record_id: item for item in release_plan.objects}
+        self.release_arrays = {item.record_id: item for item in release_plan.arrays}
 
     def generate(self, include: str) -> str:
         self._validate_entrypoints()
@@ -82,10 +86,10 @@ class CGenerator:
         return f"jbc_decode_{self._helper_suffix(record_id)}"
 
     def _release_prototype(self, record: RecordSchema) -> str:
-        return f"static void {self._release_name(record.id)}(json_allocator *allocator, struct {record.name} *out)"
+        return f"static void {self._release_name(record.id)}(json_allocator *allocator, {record.c_type} *out)"
 
     def _decode_prototype(self, record: RecordSchema) -> str:
-        return f"static bool {self._decode_name(record.id)}(json_parser *parser, struct {record.name} *out)"
+        return f"static bool {self._decode_name(record.id)}(json_parser *parser, {record.c_type} *out)"
 
     def _validate_entrypoints(self) -> None:
         cleanup_records = {
@@ -120,8 +124,49 @@ class CGenerator:
                     raise AnnotationError("the second @jsonCleanup parameter must point to a known structure", function.location)
 
     def _error_helpers(self) -> list[str]:
-        return [
-            "static void jbc_set_context_error(json_parser *parser, json_error_code code,",
+        fields = [field for obj in self.decode_plan.objects for field in obj.fields]
+        used_types = {field.value.type_id for field in fields}
+        used_types.update(array.element.type_id for array in self.decode_plan.arrays)
+        pending = list(used_types)
+        while pending:
+            item = self.types[pending.pop()]
+            if item.target is not None and item.target not in used_types:
+                used_types.add(item.target)
+                pending.append(item.target)
+        needs_context = bool(fields)
+        needs_length = any(
+            self._counter_limit(array.length_type_id) is not None
+            or self._counter_limit(array.capacity_type_id) is not None
+            for array in self.decode_plan.arrays
+        ) or any(
+            field.min_length is not None
+            or field.max_length is not None
+            or self._counter_limit(field.length_type_id) is not None
+            or self.types[field.value.type_id].kind is TypeKind.FIXED_ARRAY
+            or (
+                self.types[field.value.type_id].kind is TypeKind.STRING
+                and self.types[field.value.type_id].capacity is not None
+            )
+            for field in fields
+        )
+        needs_number = any(
+            field.minimum is not None or field.maximum is not None for field in fields
+        ) or any(
+            self.types[type_id].kind is TypeKind.FLOAT and self.types[type_id].bits == 32
+            for type_id in used_types
+        )
+        needs_memory = bool(self.decode_plan.arrays) or any(
+            self.types[type_id].kind in {TypeKind.POINTER, TypeKind.DYNAMIC_ARRAY}
+            or (
+                self.types[type_id].kind is TypeKind.STRING
+                and self.types[type_id].capacity is None
+            )
+            for type_id in used_types
+        )
+
+        lines: list[str] = []
+        context = [
+            "static inline void jbc_set_context_error(json_parser *parser, json_error_code code,",
             "                                  const char *key, json_source_location location)",
             "{",
             "    json_error_detail detail = {0};",
@@ -129,8 +174,9 @@ class CGenerator:
             "    detail.other.context.end = key + strlen(key);",
             "    json_set_error_at(parser, code, &detail, location);",
             "}",
-            "",
-            "static void jbc_set_length_error(json_parser *parser, json_error_code code,",
+        ]
+        length = [
+            "static inline void jbc_set_length_error(json_parser *parser, json_error_code code,",
             "                                 json_range_target target, size_t limit,",
             "                                 json_source_location location)",
             "{",
@@ -139,8 +185,9 @@ class CGenerator:
             "    detail.range.limit = limit;",
             "    json_set_error_at(parser, code, &detail, location);",
             "}",
-            "",
-            "static void jbc_set_number_error(json_parser *parser, json_source_location location,",
+        ]
+        number = [
+            "static inline void jbc_set_number_error(json_parser *parser, json_source_location location,",
             "                                 json_error_span value)",
             "{",
             "    json_error_detail detail = {0};",
@@ -148,12 +195,24 @@ class CGenerator:
             "    detail.range.value = value;",
             "    json_set_error_at(parser, JSON_ERROR_RANGE_NUMBER, &detail, location);",
             "}",
-            "",
-            "static void jbc_set_no_memory(json_parser *parser)",
+        ]
+        memory = [
+            "static inline void jbc_set_no_memory(json_parser *parser)",
             "{",
             "    json_set_error(parser, JSON_ERROR_OTHER_NO_MEMORY, NULL);",
             "}",
         ]
+        for needed, chunk in (
+            (needs_context, context),
+            (needs_length, length),
+            (needs_number, number),
+            (needs_memory, memory),
+        ):
+            if needed:
+                if lines:
+                    lines.append("")
+                lines.extend(chunk)
+        return lines
 
     def _field_expression(self, path: tuple[str, ...], base: str = "out") -> str:
         return base + "->" + ".".join(path)
@@ -169,6 +228,8 @@ class CGenerator:
         return result
 
     def _generate_release(self, record: RecordSchema) -> list[str]:
+        if record.shape is RecordShape.ARRAY:
+            return self._generate_array_release(record, self.release_arrays[record.id])
         plan = self.release_objects[record.id]
         lines = [self._release_prototype(record), "{", "    if (out == NULL) {", "        return;", "    }"]
         for index, field in enumerate(plan.fields):
@@ -177,6 +238,41 @@ class CGenerator:
             lines.extend(self._emit_release_value(field.type_id, expression, length, 1, f"r{index}"))
         lines.append("    memset(out, 0, sizeof(*out));")
         lines.append("}")
+        return lines
+
+    def _generate_array_release(
+        self, record: RecordSchema, plan: ReleaseArrayPlan
+    ) -> list[str]:
+        elems = self._field_expression(plan.elems_path)
+        count_path = plan.length_path or plan.capacity_path
+        lines = [
+            self._release_prototype(record),
+            "{",
+            "    if (out == NULL) {",
+            "        return;",
+            "    }",
+        ]
+        if plan.release_elements:
+            assert count_path is not None
+            count = self._field_expression(count_path)
+            lines.extend([
+                f"    if ({elems} != NULL) {{",
+                f"        for (size_t r0 = 0; r0 < (size_t)({count}); ++r0) {{",
+            ])
+            lines.extend(
+                self._emit_release_value(
+                    plan.element_type_id, f"({elems})[r0]", None, 3, "r0e"
+                )
+            )
+            lines.append("        }")
+            lines.append("    }")
+        lines.extend([
+            f"    if ({elems} != NULL) {{",
+            f"        allocator->free({elems});",
+            "    }",
+            "    memset(out, 0, sizeof(*out));",
+            "}",
+        ])
         return lines
 
     def _emit_release_value(
@@ -233,6 +329,8 @@ class CGenerator:
         return lines
 
     def _generate_decode(self, record: RecordSchema) -> list[str]:
+        if record.shape is RecordShape.ARRAY:
+            return self._generate_array_decode(record, self.decode_arrays[record.id])
         plan = self.decode_objects[record.id]
         count = max(1, len(plan.fields))
         lines = [
@@ -313,6 +411,141 @@ class CGenerator:
         ])
         return lines
 
+    def _counter_limit(self, type_id: str | None) -> int | None:
+        if type_id is None:
+            return None
+        item = self.types[type_id]
+        assert item.kind is TypeKind.INTEGER and not item.signed
+        bits = item.bits or 64
+        # The supported target is LP64, so a 64-bit unsigned counter can hold size_t.
+        return (1 << bits) - 1 if bits < 64 else None
+
+    def _emit_counter_check(
+        self,
+        value: str,
+        type_id: str | None,
+        location: str,
+        fail_label: str,
+        indent: int,
+    ) -> list[str]:
+        limit = self._counter_limit(type_id)
+        if limit is None:
+            return []
+        pad = "    " * indent
+        return [
+            f"{pad}if ({value} > (size_t){limit}) {{",
+            f"{pad}    jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {limit}, {location});",
+            f"{pad}    goto {fail_label};",
+            f"{pad}}}",
+        ]
+
+    def _generate_array_decode(
+        self, record: RecordSchema, plan: DecodeArrayPlan
+    ) -> list[str]:
+        target = self.types[plan.element.type_id]
+        elems = self._field_expression(plan.elems_path)
+        length = self._field_expression(plan.length_path) if plan.length_path else None
+        capacity = self._field_expression(plan.capacity_path) if plan.capacity_path else None
+        lines = [
+            self._decode_prototype(record),
+            "{",
+            "    json_any_vec array_vec = {0};",
+            "    size_t array_count = 0;",
+            f"    {elems} = NULL;",
+        ]
+        if self._counter_limit(plan.capacity_type_id) is not None:
+            lines.insert(4, "    json_source_location array_location = json_peek_token(parser)->location;")
+        if length is not None:
+            lines.append(f"    {length} = 0;")
+        if capacity is not None:
+            lines.append(f"    {capacity} = 0;")
+        lines.extend([
+            "    if (!json_array_begin(parser)) {",
+            "        goto fail;",
+            "    }",
+            "    if (!json_array_try_end(parser)) {",
+            "        while (true) {",
+        ])
+        # Reject before decoding the first element that cannot be represented by len.
+        limit = self._counter_limit(plan.length_type_id)
+        if limit is not None:
+            lines.extend([
+                f"            if (array_count >= (size_t){limit}) {{",
+                f"                jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {limit}, json_peek_token(parser)->location);",
+                "                goto array_fail;",
+                "            }",
+            ])
+        lines.extend([
+            f"            if (!json_any_vec_reserve(parser->allocator, &array_vec, sizeof({target.c_type}))) {{",
+            "                jbc_set_no_memory(parser);",
+            "                goto array_fail;",
+            "            }",
+            f"            {target.c_type} *array_element = ({target.c_type} *)(array_vec.data + array_vec.byte_len);",
+            f"            array_vec.byte_len += sizeof({target.c_type});",
+            "            ++array_count;",
+        ])
+        lines.extend(
+            self._emit_decode_value(
+                plan.element.type_id,
+                "*array_element",
+                None,
+                _Constraint(),
+                "array_fail",
+                3,
+                "array_element",
+            )
+        )
+        lines.extend([
+            "            if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACKET) {",
+            "                if (!json_array_try_end(parser)) goto array_fail;",
+            "                break;",
+            "            }",
+            "            if (!json_consume_comma(parser)) goto array_fail;",
+            "        }",
+            "    }",
+        ])
+        if capacity is not None:
+            lines.append(
+                f"    size_t array_capacity = array_vec.byte_cap / sizeof({target.c_type});"
+            )
+            lines.extend(
+                self._emit_counter_check(
+                    "array_capacity", plan.capacity_type_id, "array_location", "array_fail", 1
+                )
+            )
+        lines.append(f"    {elems} = ({target.c_type} *)array_vec.data;")
+        if length is not None:
+            field_type = self._field_schema(record, plan.length_path).c_type
+            lines.append(f"    {length} = ({field_type})array_count;")
+        if capacity is not None:
+            field_type = self._field_schema(record, plan.capacity_path).c_type
+            lines.append(f"    {capacity} = ({field_type})array_capacity;")
+        lines.extend([
+            "    array_vec.data = NULL;",
+            "    return true;",
+            "array_fail:",
+            "    for (size_t array_cleanup = 0; array_cleanup < array_count; ++array_cleanup) {",
+        ])
+        lines.extend(
+            self._emit_release_value(
+                plan.element.type_id,
+                f"(({target.c_type} *)array_vec.data)[array_cleanup]",
+                None,
+                2,
+                "array_cleanup_element",
+                "parser->allocator",
+            )
+        )
+        lines.extend([
+            "    }",
+            "    if (array_vec.data != NULL) parser->allocator->free(array_vec.data);",
+            "fail:",
+            f"    {self._release_name(record.id)}(parser->allocator, out);",
+            "    return false;",
+            "}",
+        ])
+        return lines
+
     def _generate_field_case(self, record: RecordSchema, field: DecodeFieldPlan) -> list[str]:
         index = field.seen_index
         expression = self._field_expression(field.path)
@@ -342,6 +575,7 @@ class CGenerator:
                 "fail",
                 3,
                 f"f{index}",
+                field.length_type_id,
             )
         )
         lines.extend(["            break;", "        }"])
@@ -356,6 +590,7 @@ class CGenerator:
         fail_label: str,
         indent: int,
         variable: str,
+        length_type_id: str | None = None,
     ) -> list[str]:
         item = self.types[type_id]
         pad = "    " * indent
@@ -405,12 +640,30 @@ class CGenerator:
             lines.extend(self._emit_pointer(item, expression, fail_label, indent, variable))
         elif item.kind is TypeKind.FIXED_ARRAY and item.target is not None:
             lines.extend(
-                self._emit_fixed_array(item, expression, length_expression, constraint, fail_label, indent, variable)
+                self._emit_fixed_array(
+                    item,
+                    expression,
+                    length_expression,
+                    length_type_id,
+                    constraint,
+                    fail_label,
+                    indent,
+                    variable,
+                )
             )
         elif item.kind is TypeKind.DYNAMIC_ARRAY and item.target is not None:
             assert length_expression is not None
             lines.extend(
-                self._emit_dynamic_array(item, expression, length_expression, constraint, fail_label, indent, variable)
+                self._emit_dynamic_array(
+                    item,
+                    expression,
+                    length_expression,
+                    length_type_id,
+                    constraint,
+                    fail_label,
+                    indent,
+                    variable,
+                )
             )
         else:
             raise AssertionError(f"unsupported decode type {item}")
@@ -509,10 +762,21 @@ class CGenerator:
             f"{pad}}} else {{",
         ]
         if target.kind is TypeKind.RECORD:
+            target_record = self.records[target.id]
+            token = (
+                "JSON_TOKEN_LBRACKET"
+                if target_record.shape is RecordShape.ARRAY
+                else "JSON_TOKEN_LBRACE"
+            )
+            expected = (
+                "JSON_EXPECTED_ARRAY"
+                if target_record.shape is RecordShape.ARRAY
+                else "JSON_EXPECTED_OBJECT"
+            )
             lines.extend([
-                f"{pad}    if (json_peek_token(parser)->kind != JSON_TOKEN_LBRACE) {{",
+                f"{pad}    if (json_peek_token(parser)->kind != {token}) {{",
                 f"{pad}        json_error_detail {variable}_type_error = {{0}};",
-                f"{pad}        {variable}_type_error.type.expected = JSON_EXPECTED_OBJECT;",
+                f"{pad}        {variable}_type_error.type.expected = {expected};",
                 f"{pad}        {variable}_type_error.type.actual = json_peek_token(parser)->kind;",
                 f"{pad}        json_set_error(parser, JSON_ERROR_TYPE_MISMATCH, &{variable}_type_error);",
                 f"{pad}        goto {fail_label};",
@@ -557,7 +821,17 @@ class CGenerator:
             ])
         return lines
 
-    def _emit_fixed_array(self, item, expression, length_expression, constraint, fail_label, indent, variable):
+    def _emit_fixed_array(
+        self,
+        item,
+        expression,
+        length_expression,
+        length_type_id,
+        constraint,
+        fail_label,
+        indent,
+        variable,
+    ):
         pad = "    " * indent
         capacity = item.capacity or 0
         lines = [f"{pad}size_t {variable}_count = 0;"]
@@ -581,12 +855,37 @@ class CGenerator:
                 f"{pad}        goto {fail_label};",
                 f"{pad}    }}",
             ])
-        lines.extend(
-            self._emit_decode_value(item.target, f"({expression})[{variable}_count]", None, _Constraint(), fail_label, indent + 1, variable + "e")
-        )
-        lines.append(f"{pad}    ++{variable}_count;")
+        length_limit = self._counter_limit(length_type_id)
+        if length_limit is not None:
+            lines.extend([
+                f"{pad}    if ({variable}_count >= (size_t){length_limit}) {{",
+                f"{pad}        jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {length_limit}, json_peek_token(parser)->location);",
+                f"{pad}        goto {fail_label};",
+                f"{pad}    }}",
+            ])
         if length_expression:
-            lines.append(f"{pad}    {length_expression} = {variable}_count;")
+            # Include the zero-initialized current slot in rollback if element decoding fails.
+            lines.extend([
+                f"{pad}    ++{variable}_count;",
+                f"{pad}    {length_expression} = {variable}_count;",
+            ])
+        lines.extend(
+            self._emit_decode_value(
+                item.target,
+                (
+                    f"({expression})[{variable}_count - 1]"
+                    if length_expression
+                    else f"({expression})[{variable}_count]"
+                ),
+                None,
+                _Constraint(),
+                fail_label,
+                indent + 1,
+                variable + "e",
+            )
+        )
+        if not length_expression:
+            lines.append(f"{pad}    ++{variable}_count;")
         lines.extend([
             f"{pad}    if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACKET) {{",
             f"{pad}        if (!json_array_try_end(parser)) goto {fail_label};",
@@ -599,7 +898,17 @@ class CGenerator:
         lines.extend(self._emit_array_length_checks(f"{variable}_count", constraint, fail_label, indent, variable))
         return lines
 
-    def _emit_dynamic_array(self, item, expression, length_expression, constraint, fail_label, indent, variable):
+    def _emit_dynamic_array(
+        self,
+        item,
+        expression,
+        length_expression,
+        length_type_id,
+        constraint,
+        fail_label,
+        indent,
+        variable,
+    ):
         pad = "    " * indent
         target = self.types[item.target]
         array_fail = f"{variable}_array_fail"
@@ -625,19 +934,27 @@ class CGenerator:
                 f"{pad}            goto {array_fail};",
                 f"{pad}        }}",
             ])
+        length_limit = self._counter_limit(length_type_id)
+        if length_limit is not None:
+            lines.extend([
+                f"{pad}        if ({variable}_count >= (size_t){length_limit}) {{",
+                f"{pad}            jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {length_limit}, json_peek_token(parser)->location);",
+                f"{pad}            goto {array_fail};",
+                f"{pad}        }}",
+            ])
         lines.extend([
             f"{pad}        if (!json_any_vec_reserve(parser->allocator, &{variable}_vec, sizeof({target.c_type}))) {{",
             f"{pad}            jbc_set_no_memory(parser);",
             f"{pad}            goto {array_fail};",
             f"{pad}        }}",
             f"{pad}        {target.c_type} *{variable}_element = ({target.c_type} *)({variable}_vec.data + {variable}_vec.byte_len);",
+            f"{pad}        {variable}_vec.byte_len += sizeof({target.c_type});",
+            f"{pad}        ++{variable}_count;",
         ])
         lines.extend(
             self._emit_decode_value(item.target, f"*{variable}_element", None, _Constraint(), array_fail, indent + 2, variable + "e")
         )
         lines.extend([
-            f"{pad}        {variable}_vec.byte_len += sizeof({target.c_type});",
-            f"{pad}        ++{variable}_count;",
             f"{pad}        if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACKET) {{",
             f"{pad}            if (!json_array_try_end(parser)) goto {array_fail};",
             f"{pad}            break;",

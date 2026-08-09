@@ -86,6 +86,72 @@ class CGeneratorTest(unittest.TestCase):
             empty_check = source.index("if (!json_array_try_end", source.index("jbc_decode_Root"))
             self.assertGreater(reserve, empty_check)
 
+    def test_array_record_and_anonymous_typedef_compile_as_c11(self) -> None:
+        header_source = """
+        #ifndef ARRAY_MODEL_H
+        #define ARRAY_MODEL_H
+        #include <stdint.h>
+        #include "json_pull.h"
+        /// @jsonStruct(asarray, elems=elems, cap=cap)
+        typedef struct {
+          char **elems;
+          uint8_t cap;
+          int ignored;
+        } StringVec;
+        /// @jsonStruct
+        typedef struct Root {
+          StringVec values;
+          StringVec *optional;
+          /// @json(required)
+          StringVec *required;
+          /// @json(type=array, len=numberCount)
+          int *numbers;
+          uint8_t numberCount;
+          int fixed[300]; /// @json(len=fixedCount)
+          uint8_t fixedCount;
+        } Root;
+        /// @jsonDecode
+        bool decodeRoot(json_parser *parser, Root *root);
+        /// @jsonCleanup
+        void releaseRoot(json_allocator *allocator, Root *root);
+        #endif
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            header = path / "array_model.h"
+            output = path / "array_model_json.c"
+            header.write_text(textwrap.dedent(header_source), encoding="utf-8")
+            unit = ClangFrontend().parse(header, ["-I", str(RUNTIME)])
+            schema = build_schema_ir(unit)
+            source = generate_c(
+                schema, build_decode_plan(schema), build_release_plan(schema), "array_model.h"
+            )
+            output.write_text(source, encoding="utf-8")
+            process = subprocess.run(
+                [
+                    "clang",
+                    "-std=c11",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    "-I",
+                    str(RUNTIME),
+                    "-I",
+                    str(path),
+                    "-fsyntax-only",
+                    str(output),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(process.returncode, 0, process.stderr + "\n" + source)
+            self.assertIn("json_parser *parser, StringVec *out", source)
+            self.assertNotIn("struct StringVec *out", source)
+            self.assertIn("JSON_EXPECTED_ARRAY", source)
+            self.assertIn("array_vec.byte_cap / sizeof(char *)", source)
+            self.assertIn("_count >= (size_t)255", source)
+
 
 if __name__ == "__main__":
     unittest.main()
