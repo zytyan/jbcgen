@@ -507,13 +507,25 @@ class CGenerator:
             f"{pad}if (json_peek_token(parser)->kind == JSON_TOKEN_NULL) {{",
             f"{pad}    if (!json_decode_null(parser)) goto {fail_label};",
             f"{pad}}} else {{",
+        ]
+        if target.kind is TypeKind.RECORD:
+            lines.extend([
+                f"{pad}    if (json_peek_token(parser)->kind != JSON_TOKEN_LBRACE) {{",
+                f"{pad}        json_error_detail {variable}_type_error = {{0}};",
+                f"{pad}        {variable}_type_error.type.expected = JSON_EXPECTED_OBJECT;",
+                f"{pad}        {variable}_type_error.type.actual = json_peek_token(parser)->kind;",
+                f"{pad}        json_set_error(parser, JSON_ERROR_TYPE_MISMATCH, &{variable}_type_error);",
+                f"{pad}        goto {fail_label};",
+                f"{pad}    }}",
+            ])
+        lines.extend([
             f"{pad}    {expression} = ({target.c_type} *)parser->allocator->malloc(sizeof(*({expression})));",
             f"{pad}    if ({expression} == NULL) {{",
             f"{pad}        jbc_set_no_memory(parser);",
             f"{pad}        goto {fail_label};",
             f"{pad}    }}",
             f"{pad}    memset({expression}, 0, sizeof(*({expression})));",
-        ]
+        ])
         lines.extend(self._emit_decode_value(item.target, f"*({expression})", None, _Constraint(), pointer_fail, indent + 1, variable + "p"))
         lines.extend([
             f"{pad}    goto {pointer_done};",

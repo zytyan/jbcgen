@@ -31,4 +31,6 @@ __all__ = [
 
 
 def main() -> None:
-    raise SystemExit("code generation is not available until the remaining implementation stages")
+    from .cli import main as cli_main
+
+    cli_main()

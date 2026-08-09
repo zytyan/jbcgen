@@ -1,118 +1,94 @@
-# JSON 解码器生成器
+# annotation-parser
 
-## 解码器分层，主要针对 C 语言生成。
+`annotation-parser` 从 C 头文件、Clang JSON AST 和文档注释生成 C11 JSON decoder 与 cleanup 实现。
 
-- annotation lexer/parser 与 Clang AST 前端
-- Schema IR: 仅有一个框架
-- Decode Plan IR： 无
-- Generator: 无
+## 分层
 
-## 生成目标
-
-生成目标分为两种，一种为直接生成C语言解码代码，另一种则是生成VM bytecode，目前主力先实现直接C语言解码。
-### Schama IR
-用于描述结构体的形状和其上的标签。
-
-### Decode Plan IR
-用于指导Decode代码的生成。
-
-### Generator
-用于从Decode Plan IR中实际生成代码，目前的想法是支持C Generator（优先）和VM bytecode Generator（暂定，目前不实现）
-
-### VM bytecode定义（未完成）
-
-
-```C
-VM 定义
-typedef uint32_t opcode;
-
-struct {
-    json_parser *parser;
-    void *root;//  根对象
-    stack *stack_ptr;
-    void *max_stack_top;
-    opcode *pc;
-};
-
-VM stack定义：
-// 由于栈大小确定，且单线程执行，所以和C语言的栈规则不同，
-// 函数退出后允许使用刚退出的函数的栈，这样就不需要返回值了
-struct stack{
-    void *base;  // 基址寄存器
-    void *index; // 变址寄存器
-    void *alloc_tail; // 分配器末尾,array时正好是 {ptr, size, cap}，obj时可以debug空间大小
-    opcode *ret; // 返回地址，返回上一级的opcode
-    union {
-        uint64_t seen;
-        uint64_t *seen_ptr;
-    }
-};
-
-字节码定义：
-UNDEFINED = 0x00000000 全0时一下就能看出来时什么问题
-
-# 全都基于变址操作，
-OFFSET (IMM)  # 可以更改index
-
-# 解引用后会改变基址，也即 DEREF =>
-{
-    base = *index;
-    index = base;
-}
-
-DEREF
-// 基于当前index，先增加offset，再ensure size，最后deref解引用该变址
-// 这条指令感觉只会需要在指针对象头前调用它
-// 仔细想想其实只会和CALL连用，应该直接把这个整合到CALL里面去
-ENSURE_DEREF_OFFSET (12SIZE, 12IMM)
-{
-    index = index + offset;
-    if (*index == NULL) {
-        *index = malloc(size);
-        alloc_tail = *index + size;
-    }
-    base = *index;
-    index = base;
-}
-
-# 全都不改变变址，基于index但不改变
-ENSURE (SIZE)
-
-STR_OFFSET_BOOL
-STR_OFFSET_U8
-STR_OFFSET_U16
-STR_OFFSET_U32
-STR_OFFSET_U64
-
-STR_OFFSET_I8
-STR_OFFSET_I16
-STR_OFFSET_I32
-STR_OFFSET_I64
-
-STR_OFFSET_F64
-STR_OFFSET_F32
-
-
-ENSURE_STR_CAP
-STR_STRING_BORROW
-STR_STRING_CPY
-
-NEXT
-
-CALL // 要不要做一个 call.offset.ensure 做一个链接表， call table_i => offset, ensure_size, base, index = table[i]
-RET
-JMP(IMM)
-J_TOKEN_EQ(TOKEN)
-J_TOKEN_NE(TOKEN)
-OBJ_DISPATCH(TABLE-OFFSET-IMM) 比较后立刻expect一个colon
-
-ARR_RESERVE(SIZE) 只有扩容，offset上面已经有了
-
-// 都是修改index的
-LOAD_ROOT   index = root
-LOAD_PARENT index = stack[-1].base;
-RESET_INDEX index = base
-
-FATAL
-SKIP_VALUE
+```text
+Clang AST + documentation comments
+               │
+               ▼
+           Schema IR
+            ├── Decode Plan  ── C decoder
+            ├── Release Plan ── C cleanup
+            └── Encode Plan  ── future
 ```
+
+Schema IR 不包含执行步骤。Decode Plan 与 Release Plan 独立从 Schema 构建，只通过稳定 Type ID 引用类型。三种现有 IR 都能打印为确定性、人类可读的调试文本；该文本不是序列化协议，不能反向解析。
+
+## CLI
+
+```text
+annotation-parser INPUT.h -o OUTPUT.c \
+  [--clang CLANG] [--include HEADER] \
+  [--dump-ir schema|decode|release|all] \
+  [-- <clang 参数>...]
+```
+
+开发目录中可直接运行：
+
+```sh
+PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
+  -o example_json.c --include example/example.h -- -I ../runtime
+```
+
+生成失败时不会覆盖已有输出文件。Clang 和注解错误包含文件、行、列。
+
+## 注解
+
+- `@jsonStruct`：允许作为公开生成入口的结构体。
+- `@jsonDecode`：标记 `bool function(json_parser *, T *)` 声明。
+- `@jsonCleanup`：标记 `void function(json_allocator *, T *)` 声明。
+- `@json(...)`：设置字段行为。
+
+字段参数：
+
+- `key=name`：主 JSON key。
+- `altkey=name`：别名，可重复；任一别名与主键共享重复检测和 required 状态。
+- `required`：key 必须出现且值不能为 null；`{}`、`[]` 和空字符串合法。
+- `min`、`max`：含边界数值限制。
+- `minlen`、`maxlen`：解码后字符串字节数或数组元素数限制。
+- `type=array, len=countField`：将 `T *` 解释为动态数组。
+- `len=countField`：为固定数组保存实际元素数。
+- `flatten`：将值结构体字段展开到父对象；不能与 `required` 组合。
+- `omitempty`：保存在 Schema 中，当前 decoder 不使用。
+
+未知参数、重复的单值参数、不适用的参数组合和 JSON key 冲突都会在生成期报错。动态数组的伴随长度字段不作为独立 JSON key。
+
+## 支持的 C 类型
+
+- `_Bool` / `bool`
+- LP64 下的有符号和无符号基础整数及 typedef
+- `float`、`double`
+- 数值 enum
+- `char *`、`char[N]`
+- 固定 `T[N]`
+- 值结构体、结构体指针和递归指针
+- 带 `len` 的动态 `T *` 数组
+
+暂不支持 union、位域、函数指针、柔性或零长 C 数组。
+
+## 解码与所有权
+
+- 调用 decode 前，输出对象必须全零；重复使用前先 cleanup。
+- 未知字段跳过，重复已知字段报错，缺失的非 required 字段保持零值。
+- required key 缺失与 required 值为 null 使用不同的结构化错误码。
+- 非 required 的 `char *`、动态数组和结构体指针接受 null，且不分配。
+- 动态数组使用延迟分配；`null` 和 `[]` 均保持 `NULL + 0`，只有第一个元素出现后才申请容量。
+- 空 JSON 字符串分配一个 NUL 字节，以区别于 null。
+- `char *` 与 `char[N]` 拒绝嵌入 NUL；字符串长度按解码后的 UTF-8 字节计算。
+- 失败时由独立 Release Plan 生成的 helper 深度回滚并清零；cleanup 可重复调用。
+
+## 测试
+
+```sh
+cd annotation_parser
+PYTHONPATH=src python3 -m unittest discover -s tests -v
+
+cd ../runtime
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+Runtime 的 CMake 测试会生成、编译并执行 `example/example.h` 对应的 decoder。

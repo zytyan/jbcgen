@@ -1,15 +1,47 @@
 # jbcgen
 
-从C结构体+文档注释生成C语言json解码器的工具。
+从 C 结构体和文档注释生成 C11 JSON 解码器与资源释放函数。
 
 
-## Python 部分
-Python部分用于生成解析器、字节码和读取对应的文档属性，预计使用`clang -Xclang -dump-ast=json` 获取。但时机成熟后也可以使用libtooling编译后获取。同时换用libtooling后，也应该支持 __attribute__((annoation("..."))) 这种与源码结合更强的方式。
+## 快速开始
 
-当前假设目标架构为64位，不同整数位数固定。换用libtooling后可以从`compile_commands.json`中获得实际整数大小。
+头文件在结构体和函数声明上使用文档注释：
 
-### annotation_parser
-具体内容见目录内README。
+```c
+/// @jsonStruct
+typedef struct User {
+  /// @json(key=id, altkey=user-id, required)
+  uint32_t id;
+  /// @json(type=array, len=itemCount)
+  Item *items;
+  size_t itemCount;
+} User;
+
+/// @jsonDecode
+bool decodeUser(json_parser *parser, User *user);
+
+/// @jsonCleanup
+void releaseUser(json_allocator *allocator, User *user);
+```
+
+生成 C 源码：
+
+```sh
+cd annotation_parser
+PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
+  -o example_json.c --include example/example.h -- -I ../runtime
+```
+
+使用 `--dump-ir schema|decode|release|all` 可将只读调试文本输出到 stderr。
+
+## 架构
+
+Clang JSON AST 和文档注释先构建纯描述性的 Schema IR。Decode Plan 与 Release Plan 分别直接从 Schema IR 生成；C generator 再分别消费两种 Plan。未来的 Encode Plan 也将直接从 Schema IR 生成。
+
+Python 前端和注解说明见 [annotation_parser/README.md](annotation_parser/README.md)。
 
 ## C部分
-用于解码Json的运行时，基本上是一个一遍扫描的pull API模式的 Json扫描器，有部分扩展能力。
+
+`runtime` 提供单遍扫描的 pull parser、结构化错误、字符串与动态数组辅助函数。生成的 decode 输出对象必须预先全零；失败时会回滚为全零，成功后使用对应的 cleanup 函数释放。
+
+当前使用 Python 3.13、Clang、C11，并按 64 位 LP64 数据模型解释基础整数类型。

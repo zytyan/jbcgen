@@ -1,7 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
 
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
-
 # Test source files
 set(JSON_OBJS_TEST_SRC
         test_json_tokenizer.cpp
@@ -9,14 +7,18 @@ set(JSON_OBJS_TEST_SRC
         test_json_decode_string.cpp
         test_json_str_slice.cpp
         test_json_writer.cpp
+        test_generated_decoder.cpp
         ${GENERATED_SOURCE}
         ${GENERATED_TEST}
 )
+
+set_source_files_properties(${GENERATED_SOURCE} PROPERTIES GENERATED TRUE)
 
 add_executable(
     zjson_test
     ${JSON_OBJS_TEST_SRC}
 )
+add_dependencies(zjson_test generate_example_json)
 
 target_link_libraries(
     zjson_test
@@ -25,7 +27,10 @@ target_link_libraries(
     zjson_pull_api
 )
 
-target_include_directories(zjson_test PRIVATE ${GENERATED_DIR})
+target_include_directories(zjson_test PRIVATE
+    ${GENERATED_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../..
+)
 
 include(GoogleTest)
 if(NOT ENABLE_SANITIZERS)

@@ -152,20 +152,23 @@ def _leading_source_comment(node: dict[str, Any], source: str) -> str:
     return ""
 
 
-def _node_annotations(node: dict[str, Any], default_file: Path, source: str) -> tuple[Annotation, ...]:
-    location = _location(node, default_file)
+def _belongs_to_default_source(node: dict[str, Any], default_file: Path, source: str) -> bool:
     loc = node.get("loc", {})
+    if loc.get("file") is not None:
+        return Path(loc["file"]).resolve() == default_file.resolve()
     offset = loc.get("offset")
     token_length = int(loc.get("tokLen", 0))
     node_name = node.get("name", "")
-    belongs_to_default = (
-        loc.get("file") == str(default_file)
-        or (
-            "file" not in loc
-            and offset is not None
-            and source[int(offset) : int(offset) + token_length] == node_name
-        )
+    return (
+        offset is not None
+        and bool(node_name)
+        and source[int(offset) : int(offset) + token_length] == node_name
     )
+
+
+def _node_annotations(node: dict[str, Any], default_file: Path, source: str) -> tuple[Annotation, ...]:
+    location = _location(node, default_file)
+    belongs_to_default = _belongs_to_default_source(node, default_file, source)
     if belongs_to_default:
         leading = _leading_source_comment(node, source)
         if leading:
@@ -287,6 +290,8 @@ class ClangFrontend:
                     )
                 )
             elif kind == "FunctionDecl" and node.get("name"):
+                if not _belongs_to_default_source(node, input_file, source):
+                    continue
                 annotations = _node_annotations(node, input_file, source)
                 if not annotations:
                     continue
