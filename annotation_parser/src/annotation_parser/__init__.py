@@ -1,5 +1,5 @@
 from .annotations import Annotation, AnnotationArgument, parse_annotations
-from .clang_frontend import ClangFrontend, TranslationUnit
+from .clang_frontend import AstType, AstTypeKind, ClangFrontend, TranslationUnit
 from .schema_ir import SchemaIR, build_schema_ir, format_schema_ir
 from .plan_ir import (
     DecodePlan,
@@ -15,6 +15,8 @@ __all__ = [
     "Annotation",
     "AnnotationArgument",
     "ClangFrontend",
+    "AstType",
+    "AstTypeKind",
     "TranslationUnit",
     "SchemaIR",
     "build_schema_ir",

@@ -1,7 +1,14 @@
 import unittest
 
 from annotation_parser.annotations import parse_annotations
-from annotation_parser.clang_frontend import AstField, AstRecord, AstTypedef, TranslationUnit
+from annotation_parser.clang_frontend import (
+    AstField,
+    AstRecord,
+    AstType,
+    AstTypeKind,
+    TranslationUnit,
+    parse_type_spelling,
+)
 from annotation_parser.diagnostics import AnnotationError, SourceLocation
 from annotation_parser.schema_ir import RecordShape, TypeKind, build_schema_ir, format_schema_ir
 
@@ -13,22 +20,35 @@ def field(name: str, c_type: str, annotation: str = "", desugared: str | None = 
     return AstField(
         f"field-{name}",
         name,
-        c_type,
-        desugared,
+        parse_type_spelling(
+            c_type,
+            desugared,
+            record_names={"City", "Nested", "Root", "Vec", "Strings", "User"},
+        ),
         parse_annotations(annotation, LOCATION),
         LOCATION,
     )
 
 
 def unit(records: tuple[AstRecord, ...]) -> TranslationUnit:
-    aliases = tuple(
-        AstTypedef(f"typedef-{record.name}", record.name, f"struct {record.name}", None, LOCATION)
-        for record in records
-    )
-    return TranslationUnit(__import__("pathlib").Path("input.h"), records, aliases, (), ())
+    return TranslationUnit(__import__("pathlib").Path("input.h"), records, (), (), ())
 
 
 class SchemaIrTest(unittest.TestCase):
+    def test_consumes_structured_frontend_type_without_parsing_c_spelling(self) -> None:
+        structured = AstType(AstTypeKind.INTEGER, "opaque_counter_alias", 16, False)
+        root = AstRecord(
+            "root",
+            "Root",
+            (AstField("value", "value", structured, (), LOCATION),),
+            parse_annotations("@jsonStruct", LOCATION),
+            LOCATION,
+        )
+        schema = build_schema_ir(unit((root,)))
+        value = schema.record_map()["record:Root"].fields[0]
+        self.assertEqual(value.type_id, "integer:u16")
+        self.assertEqual(value.c_type, "opaque_counter_alias")
+
     def test_builds_recursive_reachable_schema_and_length_metadata(self) -> None:
         city = AstRecord(
             "city",

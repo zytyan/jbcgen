@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 
 from .annotations import Annotation
-from .clang_frontend import AstField, AstRecord, TranslationUnit
+from .clang_frontend import AstField, AstRecord, AstType, AstTypeKind, TranslationUnit
 from .diagnostics import AnnotationError, SourceLocation
 
 
@@ -85,9 +84,11 @@ class FunctionSchema:
     name: str
     role: str
     record_id: str | None
-    type_name: str
     parameter_types: tuple[str, ...]
     location: SourceLocation
+    return_kind: str
+    parameter_kinds: tuple[str, ...]
+    parameter_target_names: tuple[str | None, ...]
 
 
 @dataclass(frozen=True)
@@ -101,32 +102,6 @@ class SchemaIR:
 
     def record_map(self) -> dict[str, RecordSchema]:
         return {item.id: item for item in self.records}
-
-
-_INTEGER_TYPES: dict[str, tuple[int, bool]] = {
-    "char": (8, True),
-    "signed char": (8, True),
-    "unsigned char": (8, False),
-    "short": (16, True),
-    "short int": (16, True),
-    "signed short": (16, True),
-    "unsigned short": (16, False),
-    "unsigned short int": (16, False),
-    "int": (32, True),
-    "signed": (32, True),
-    "signed int": (32, True),
-    "unsigned": (32, False),
-    "unsigned int": (32, False),
-    "long": (64, True),
-    "long int": (64, True),
-    "signed long": (64, True),
-    "unsigned long": (64, False),
-    "unsigned long int": (64, False),
-    "long long": (64, True),
-    "long long int": (64, True),
-    "unsigned long long": (64, False),
-    "unsigned long long int": (64, False),
-}
 
 
 def _json_annotation(annotations: tuple[Annotation, ...], location: SourceLocation) -> Annotation | None:
@@ -174,13 +149,6 @@ class SchemaBuilder:
         self.unit = unit
         self.types: dict[str, TypeSchema] = {}
         self.records_by_name = {record.name: record for record in unit.records}
-        self.typedefs = {item.name: item for item in unit.typedefs}
-        self.enums_by_name = {item.name: item for item in unit.enums}
-        self.record_aliases: dict[str, str] = {}
-        for item in unit.typedefs:
-            match = re.fullmatch(r"struct\s+([A-Za-z_]\w*)", item.type_name.strip())
-            if match:
-                self.record_aliases[item.name] = match.group(1)
         self.building_records: set[str] = set()
         self.built_records: dict[str, RecordSchema] = {}
         self.public_names: set[str] = set()
@@ -212,9 +180,14 @@ class SchemaBuilder:
                         function.name,
                         role,
                         record_id,
-                        function.type_name,
-                        tuple(parameter.type_name for parameter in function.parameters),
+                        tuple(parameter.type.c_type for parameter in function.parameters),
                         function.location,
+                        function.return_type.kind.value,
+                        tuple(parameter.type.kind.value for parameter in function.parameters),
+                        tuple(
+                            parameter.type.target.name if parameter.type.target else None
+                            for parameter in function.parameters
+                        ),
                     )
                 )
 
@@ -269,12 +242,14 @@ class SchemaBuilder:
 
     def _function_record(self, parameters: tuple) -> str | None:
         for parameter in reversed(parameters):
-            text = parameter.type_name.strip()
-            if text.endswith("*"):
-                base = text[:-1].strip()
-                name = self._record_name(base)
-                if name is not None:
-                    return f"record:{name}"
+            item = parameter.type
+            if (
+                item.kind is AstTypeKind.POINTER
+                and item.target is not None
+                and item.target.kind is AstTypeKind.RECORD
+                and item.target.name in self.records_by_name
+            ):
+                return f"record:{item.target.name}"
         return None
 
     def _field_owns(self, type_id: str, record_ownership: dict[str, bool]) -> bool:
@@ -399,20 +374,20 @@ class SchemaBuilder:
 
     def _resolve_array_element_type(self, field: AstField) -> str:
         self._validate_array_elems_declaration(field)
-        text = re.sub(r"\b(const|volatile|restrict)\b", "", field.type_name).strip()
-        text = re.sub(r"\s+", " ", text)
-        pointee = text[:-1].strip()
-        return self._resolve_type(pointee, None, field.location)
+        assert field.type.target is not None
+        return self._resolve_type(field.type.target, field.location)
 
     def _validate_array_elems_declaration(self, field: AstField) -> None:
-        text = re.sub(r"\b(const|volatile|restrict)\b", "", field.type_name).strip()
-        text = re.sub(r"\s+", " ", text)
-        if not text.endswith("*") or text[:-1].strip() == "void":
+        if (
+            field.type.kind is not AstTypeKind.POINTER
+            or field.type.target is None
+            or field.type.target.kind in {AstTypeKind.VOID, AstTypeKind.UNKNOWN}
+        ):
             raise AnnotationError("array record elems field must be a non-void pointer", field.location)
 
     def _build_field(self, field: AstField) -> FieldSchema:
         annotation = _json_annotation(field.annotations, field.location)
-        type_id = self._resolve_type(field.type_name, field.desugared_type, field.location)
+        type_id = self._resolve_type(field.type, field.location)
         type_schema = self.types[type_id]
         array_kind = _one(annotation, "type")
         length_field = _one(annotation, "len")
@@ -427,7 +402,7 @@ class SchemaBuilder:
                 TypeSchema(
                     f"dynamic-array:{type_schema.target}",
                     TypeKind.DYNAMIC_ARRAY,
-                    field.type_name,
+                    field.type.c_type,
                     target=type_schema.target,
                 )
             )
@@ -471,7 +446,7 @@ class SchemaBuilder:
         key = _one(annotation, "key") or field.name
         return FieldSchema(
             field.name,
-            field.type_name,
+            field.type.c_type,
             type_id,
             key,
             altkeys,
@@ -513,67 +488,71 @@ class SchemaBuilder:
 
         add_fields(record, "")
 
-    def _record_name(self, text: str) -> str | None:
-        text = text.strip()
-        if text.startswith("struct "):
-            return text.removeprefix("struct ").strip()
-        if text in self.record_aliases:
-            return self.record_aliases[text]
-        if text in self.records_by_name:
-            return text
-        return None
-
-    def _resolve_type(self, original: str, desugared: str | None, location: SourceLocation) -> str:
-        text = re.sub(r"\b(const|volatile|restrict)\b", "", original).strip()
-        text = re.sub(r"\s+", " ", text)
-        array_match = re.fullmatch(r"(.+)\[(\d+)\]", text)
-        if array_match:
-            element_text, capacity_text = array_match.groups()
-            capacity = int(capacity_text)
-            if capacity <= 0:
+    def _resolve_type(self, ast_type: AstType, location: SourceLocation) -> str:
+        if ast_type.kind is AstTypeKind.ARRAY:
+            capacity = ast_type.capacity
+            if capacity is None or capacity <= 0 or ast_type.target is None:
                 raise AnnotationError("zero-length and flexible C arrays are not supported", location)
-            if element_text.strip() == "char":
+            if ast_type.target.kind is AstTypeKind.INTEGER and ast_type.target.name == "char":
                 return self._intern(
-                    TypeSchema(f"string:fixed:{capacity}", TypeKind.STRING, text, capacity=capacity)
+                    TypeSchema(
+                        f"string:fixed:{capacity}",
+                        TypeKind.STRING,
+                        ast_type.c_type,
+                        capacity=capacity,
+                    )
                 )
-            target = self._resolve_type(element_text, None, location)
+            target = self._resolve_type(ast_type.target, location)
             return self._intern(
-                TypeSchema(f"fixed-array:{capacity}:{target}", TypeKind.FIXED_ARRAY, text, target=target, capacity=capacity)
+                TypeSchema(
+                    f"fixed-array:{capacity}:{target}",
+                    TypeKind.FIXED_ARRAY,
+                    ast_type.c_type,
+                    target=target,
+                    capacity=capacity,
+                )
             )
-        if text.endswith("*"):
-            target_text = text[:-1].strip()
-            if target_text == "char":
-                return self._intern(TypeSchema("string:pointer", TypeKind.STRING, text))
-            target = self._resolve_type(target_text, None, location)
-            return self._intern(TypeSchema(f"pointer:{target}", TypeKind.POINTER, text, target=target))
-        if text == "_Bool" or text == "bool":
-            return self._intern(TypeSchema("bool", TypeKind.BOOL, text, bits=8, signed=False))
-        builtin = desugared.strip() if desugared and desugared.strip() in _INTEGER_TYPES else text
-        if builtin in _INTEGER_TYPES:
-            bits, signed = _INTEGER_TYPES[builtin]
+        if ast_type.kind is AstTypeKind.POINTER:
+            if ast_type.target is None:
+                raise AnnotationError(f"unsupported C type {ast_type.c_type!r}", location)
+            if ast_type.target.kind is AstTypeKind.INTEGER and ast_type.target.name == "char":
+                return self._intern(TypeSchema("string:pointer", TypeKind.STRING, ast_type.c_type))
+            target = self._resolve_type(ast_type.target, location)
+            return self._intern(
+                TypeSchema(f"pointer:{target}", TypeKind.POINTER, ast_type.c_type, target=target)
+            )
+        if ast_type.kind is AstTypeKind.BOOL:
+            return self._intern(
+                TypeSchema("bool", TypeKind.BOOL, ast_type.c_type, bits=8, signed=False)
+            )
+        if ast_type.kind is AstTypeKind.INTEGER:
+            bits = ast_type.bits or 32
+            signed = bool(ast_type.signed)
             prefix = "i" if signed else "u"
-            return self._intern(TypeSchema(f"integer:{prefix}{bits}", TypeKind.INTEGER, text, bits, signed))
-        if builtin in {"float", "double"}:
-            bits = 32 if builtin == "float" else 64
-            return self._intern(TypeSchema(f"float:{bits}", TypeKind.FLOAT, text, bits=bits, signed=True))
-        record_name = self._record_name(text)
-        if record_name is not None:
-            self._build_record(record_name, self.public_names)
-            record_id = f"record:{record_name}"
-            self.types.setdefault(record_id, TypeSchema(record_id, TypeKind.RECORD, text))
-            return record_id
-        enum_name = text.removeprefix("enum ").strip()
-        if enum_name in self.enums_by_name:
-            enum = self.enums_by_name[enum_name]
-            underlying = enum.integer_type or "int"
-            bits, signed = _INTEGER_TYPES.get(underlying, (32, True))
             return self._intern(
-                TypeSchema(f"enum:{enum_name}", TypeKind.ENUM, text, bits=bits, signed=signed)
+                TypeSchema(f"integer:{prefix}{bits}", TypeKind.INTEGER, ast_type.c_type, bits, signed)
             )
-        alias = self.typedefs.get(text)
-        if alias is not None and alias.type_name != text:
-            return self._resolve_type(alias.type_name, alias.desugared_type, location)
-        raise AnnotationError(f"unsupported C type {original!r}", location)
+        if ast_type.kind is AstTypeKind.FLOAT:
+            bits = ast_type.bits or 64
+            return self._intern(
+                TypeSchema(f"float:{bits}", TypeKind.FLOAT, ast_type.c_type, bits=bits, signed=True)
+            )
+        if ast_type.kind is AstTypeKind.RECORD and ast_type.name is not None:
+            self._build_record(ast_type.name, self.public_names)
+            record_id = f"record:{ast_type.name}"
+            self.types.setdefault(record_id, TypeSchema(record_id, TypeKind.RECORD, ast_type.c_type))
+            return record_id
+        if ast_type.kind is AstTypeKind.ENUM and ast_type.name is not None:
+            return self._intern(
+                TypeSchema(
+                    f"enum:{ast_type.name}",
+                    TypeKind.ENUM,
+                    ast_type.c_type,
+                    bits=ast_type.bits or 32,
+                    signed=bool(ast_type.signed),
+                )
+            )
+        raise AnnotationError(f"unsupported C type {ast_type.c_type!r}", location)
 
     def _intern(self, schema: TypeSchema) -> str:
         self.types.setdefault(schema.id, schema)

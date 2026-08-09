@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 from annotation_parser.annotations import parse_annotations
-from annotation_parser.clang_frontend import AstField, AstRecord, AstTypedef, TranslationUnit
+from annotation_parser.clang_frontend import AstField, AstRecord, TranslationUnit, parse_type_spelling
 from annotation_parser.diagnostics import SourceLocation
 from annotation_parser.plan_ir import (
     DecodeOperation,
@@ -22,8 +22,11 @@ def field(name: str, c_type: str, annotation: str = "", desugared: str | None = 
     return AstField(
         name,
         name,
-        c_type,
-        desugared,
+        parse_type_spelling(
+            c_type,
+            desugared,
+            record_names={"Detail", "Root", "Node", "Strings"},
+        ),
         parse_annotations(annotation, LOCATION),
         LOCATION,
     )
@@ -49,11 +52,7 @@ def make_schema():
         parse_annotations("@jsonStruct", LOCATION),
         LOCATION,
     )
-    aliases = (
-        AstTypedef("td-detail", "Detail", "struct Detail", None, LOCATION),
-        AstTypedef("td-root", "Root", "struct Root", None, LOCATION),
-    )
-    unit = TranslationUnit(Path("plan.h"), (detail, root), aliases, (), ())
+    unit = TranslationUnit(Path("plan.h"), (detail, root), (), (), ())
     return build_schema_ir(unit)
 
 
@@ -111,7 +110,7 @@ class PlanIrTest(unittest.TestCase):
             TranslationUnit(
                 Path("strings.h"),
                 (vector,),
-                (AstTypedef("td", "Strings", "struct Strings", None, LOCATION),),
+                (),
                 (),
                 (),
             )

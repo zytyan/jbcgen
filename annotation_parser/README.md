@@ -5,7 +5,10 @@
 ## 分层
 
 ```text
-Clang AST + documentation comments
+Clang JSON AST + documentation comments
+               │
+               ▼
+  structured frontend AST (`AstType` tree)
                │
                ▼
            Schema IR
@@ -13,6 +16,8 @@ Clang AST + documentation comments
             ├── Release Plan ── C cleanup
             └── Encode Plan  ── future
 ```
+
+Clang frontend 负责 typedef 展开以及基础类型、enum、record、指针和数组的结构化解析。传入 SchemaBuilder 的字段和函数签名已经是不可变的 `AstType` 树；Schema 层只做 JSON 语义映射、约束和所有权分析，不再解析 `qualType` 字符串。
 
 Schema IR 不包含执行步骤。Decode Plan 与 Release Plan 独立从 Schema 构建，只通过稳定 Type ID 引用类型。三种现有 IR 都能打印为确定性、人类可读的调试文本；该文本不是序列化协议，不能反向解析。
 

@@ -46,7 +46,7 @@ PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
 
 ## 架构
 
-Clang JSON AST 和文档注释先构建纯描述性的 Schema IR。Decode Plan 与 Release Plan 分别直接从 Schema IR 生成；C generator 再分别消费两种 Plan。未来的 Encode Plan 也将直接从 Schema IR 生成。
+Clang frontend 先把 JSON AST 中的 C 类型解析为结构化类型树，再与文档注释共同构建纯描述性的 Schema IR。Schema 层不解析 Clang 的类型字符串。Decode Plan 与 Release Plan 分别直接从 Schema IR 生成；C generator 再分别消费两种 Plan。未来的 Encode Plan 也将直接从 Schema IR 生成。
 
 Python 前端和注解说明见 [annotation_parser/README.md](annotation_parser/README.md)。
 

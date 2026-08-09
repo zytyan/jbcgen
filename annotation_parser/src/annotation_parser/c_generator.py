@@ -97,13 +97,15 @@ class CGenerator:
         }
         for function in self.schema.functions:
             if function.role == "jsonDecode":
-                return_type = function.type_name.split("(", 1)[0].strip()
-                if return_type not in {"bool", "_Bool"} or len(function.parameter_types) != 2:
+                if function.return_kind != "bool" or len(function.parameter_types) != 2:
                     raise AnnotationError(
                         "@jsonDecode requires bool function(json_parser *, T *)",
                         function.location,
                     )
-                if "json_parser" not in function.parameter_types[0] or not function.parameter_types[0].strip().endswith("*"):
+                if (
+                    function.parameter_kinds[0] != "pointer"
+                    or function.parameter_target_names[0] != "json_parser"
+                ):
                     raise AnnotationError("the first @jsonDecode parameter must be json_parser *", function.location)
                 if function.record_id is None or function.record_id not in self.records:
                     raise AnnotationError("the second @jsonDecode parameter must point to a known structure", function.location)
@@ -112,13 +114,15 @@ class CGenerator:
                 if function.record_id not in cleanup_records:
                     raise AnnotationError("each @jsonDecode target requires an @jsonCleanup function", function.location)
             elif function.role == "jsonCleanup":
-                return_type = function.type_name.split("(", 1)[0].strip()
-                if return_type != "void" or len(function.parameter_types) != 2:
+                if function.return_kind != "void" or len(function.parameter_types) != 2:
                     raise AnnotationError(
                         "@jsonCleanup requires void function(json_allocator *, T *)",
                         function.location,
                     )
-                if "json_allocator" not in function.parameter_types[0] or not function.parameter_types[0].strip().endswith("*"):
+                if (
+                    function.parameter_kinds[0] != "pointer"
+                    or function.parameter_target_names[0] != "json_allocator"
+                ):
                     raise AnnotationError("the first @jsonCleanup parameter must be json_allocator *", function.location)
                 if function.record_id is None or function.record_id not in self.records:
                     raise AnnotationError("the second @jsonCleanup parameter must point to a known structure", function.location)
