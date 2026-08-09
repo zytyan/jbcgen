@@ -36,7 +36,8 @@ PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
 
 ## 注解
 
-- `@jsonStruct`：允许作为公开生成入口的结构体。
+- `@jsonStruct`：将结构体映射为 JSON 对象，并允许作为公开生成入口。
+- `@jsonStruct(asarray, elems=elems, len=len, cap=cap)`：将结构体本身映射为 JSON 数组。
 - `@jsonDecode`：标记 `bool function(json_parser *, T *)` 声明。
 - `@jsonCleanup`：标记 `void function(json_allocator *, T *)` 声明。
 - `@json(...)`：设置字段行为。
@@ -55,6 +56,26 @@ PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
 
 未知参数、重复的单值参数、不适用的参数组合和 JSON key 冲突都会在生成期报错。动态数组的伴随长度字段不作为独立 JSON key。
 
+### 数组容器结构体
+
+```c
+/// @jsonStruct(asarray, elems=elems, len=len, cap=cap)
+typedef struct {
+    Elem *elems;
+    size_t len;
+    size_t cap;
+    int reserved; /* ignored，始终保持零值 */
+} ElemVec;
+```
+
+- `asarray` 和 `elems=<field>` 必须同时出现；`len`、`cap` 可分别省略。
+- `elems` 必须是非 `void` 指针。`len`、`cap` 若存在，必须是互不相同的无符号整数字段；写入前按字段位宽检查溢出。
+- `cap` 保存 `json_any_vec.byte_cap / sizeof(Elem)`，即实际可用元素容量，不是 JSON 元素数。
+- 未被 `elems`、`len`、`cap` 引用的字段不参与解码和 cleanup，并保持零值。
+- 没有 `len` 和 `cap` 时，元素类型必须无需逐元素释放。
+- 具名结构体和匿名 typedef 均支持。数组形状的结构体不能用于 `flatten`。
+- Decode Plan 和 Release Plan 各自拥有独立的 array-record 节点；调试打印会显示存储字段、计数来源和回滚 Type ID。
+
 ## 支持的 C 类型
 
 - `_Bool` / `bool`
@@ -65,6 +86,7 @@ PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
 - 固定 `T[N]`
 - 值结构体、结构体指针和递归指针
 - 带 `len` 的动态 `T *` 数组
+- 使用 `@jsonStruct(asarray, ...)` 的结构体级数组容器
 
 暂不支持 union、位域、函数指针、柔性或零长 C 数组。
 
@@ -75,6 +97,8 @@ PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
 - required key 缺失与 required 值为 null 使用不同的结构化错误码。
 - 非 required 的 `char *`、动态数组和结构体指针接受 null，且不分配。
 - 动态数组使用延迟分配；`null` 和 `[]` 均保持 `NULL + 0`，只有第一个元素出现后才申请容量。
+- 数组容器同样延迟申请元素缓冲区；根或值类型遇到 `null` 是类型错误，非 required 指针可接受 `null`，required 指针的 `null` 使用 required-null 错误。
+- cap-only 资源元素容器按容量 cleanup；生成器依赖 `json_any_vec` 将未使用槽位置零，从而安全重复释放。
 - 空 JSON 字符串分配一个 NUL 字节，以区别于 null。
 - `char *` 与 `char[N]` 拒绝嵌入 NUL；字符串长度按解码后的 UTF-8 字节计算。
 - 失败时由独立 Release Plan 生成的 helper 深度回滚并清零；cleanup 可重复调用。

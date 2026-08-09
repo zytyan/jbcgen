@@ -3,14 +3,20 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <string>
 
 namespace {
 
 size_t allocation_count;
 size_t free_count;
+size_t allocation_limit;
 
 void *tracking_malloc(size_t size)
 {
+    if (allocation_count >= allocation_limit) {
+        return nullptr;
+    }
     ++allocation_count;
     return std::malloc(size);
 }
@@ -36,6 +42,7 @@ class GeneratedDecoderTest : public ::testing::Test {
     {
         allocation_count = 0;
         free_count = 0;
+        allocation_limit = std::numeric_limits<size_t>::max();
     }
 
     bool decode(const char *input, User *user, json_parser *parser)
@@ -126,6 +133,163 @@ TEST_F(GeneratedDecoderTest, DuplicateAliasAndRangeFailureRollback)
     EXPECT_EQ(free_count, 1U);
     EXPECT_EQ(user.bases, nullptr);
     EXPECT_EQ(user.basesLen, 0U);
+}
+
+TEST_F(GeneratedDecoderTest, ArrayRecordEmptyAndNullNeverAllocate)
+{
+    IntVec values{};
+    json_parser parser{};
+    json_parser_init(&parser, &allocator, slice("[]"));
+    ASSERT_TRUE(decodeIntVec(&parser, &values));
+    EXPECT_EQ(values.elems, nullptr);
+    EXPECT_EQ(values.len, 0U);
+    EXPECT_EQ(values.cap, 0U);
+    EXPECT_EQ(values.reserved, 0U);
+    EXPECT_EQ(allocation_count, 0U);
+
+    parser = {};
+    values = {};
+    json_parser_init(&parser, &allocator, slice("null"));
+    EXPECT_FALSE(decodeIntVec(&parser, &values));
+    EXPECT_EQ(parser.error.code, JSON_ERROR_TYPE_MISMATCH);
+    EXPECT_EQ(allocation_count, 0U);
+    EXPECT_EQ(values.elems, nullptr);
+}
+
+TEST_F(GeneratedDecoderTest, ArrayRecordStoresLengthAndActualCapacity)
+{
+    IntVec values{};
+    json_parser parser{};
+    json_parser_init(&parser, &allocator, slice("[10,20]"));
+    ASSERT_TRUE(decodeIntVec(&parser, &values));
+    ASSERT_NE(values.elems, nullptr);
+    EXPECT_EQ(values.len, 2U);
+    EXPECT_EQ(values.cap, 16U / sizeof(i32));
+    EXPECT_EQ(values.elems[0], 10);
+    EXPECT_EQ(values.elems[1], 20);
+    EXPECT_EQ(values.reserved, 0U);
+    releaseIntVec(&allocator, &values);
+    releaseIntVec(&allocator, &values);
+    EXPECT_EQ(allocation_count, 1U);
+    EXPECT_EQ(free_count, 1U);
+    EXPECT_EQ(values.elems, nullptr);
+}
+
+TEST_F(GeneratedDecoderTest, LenOnlyAndElemsOnlyArrayRecordsDecode)
+{
+    NarrowIntVec with_len{};
+    BareIntVec bare{};
+    json_parser parser{};
+    json_parser_init(&parser, &allocator, slice("[3,4]"));
+    ASSERT_TRUE(decodeNarrowIntVec(&parser, &with_len));
+    ASSERT_NE(with_len.elems, nullptr);
+    EXPECT_EQ(with_len.len, 2U);
+
+    parser = {};
+    json_parser_init(&parser, &allocator, slice("[7]"));
+    ASSERT_TRUE(decodeBareIntVec(&parser, &bare));
+    ASSERT_NE(bare.elems, nullptr);
+    EXPECT_EQ(bare.elems[0], 7);
+
+    releaseNarrowIntVec(&allocator, &with_len);
+    releaseBareIntVec(&allocator, &bare);
+    EXPECT_EQ(allocation_count, free_count);
+}
+
+TEST_F(GeneratedDecoderTest, CapOnlyResourceElementsUseZeroedSpareSlots)
+{
+    StringSlots values{};
+    json_parser parser{};
+    json_parser_init(&parser, &allocator, slice(R"(["first"])"));
+    ASSERT_TRUE(decodeStringSlots(&parser, &values));
+    ASSERT_NE(values.elems, nullptr);
+    ASSERT_EQ(values.cap, 16U / sizeof(char *));
+    ASSERT_GE(values.cap, 1U);
+    EXPECT_STREQ(values.elems[0], "first");
+    for (size_t index = 1; index < values.cap; ++index) {
+        EXPECT_EQ(values.elems[index], nullptr);
+    }
+    releaseStringSlots(&allocator, &values);
+    releaseStringSlots(&allocator, &values);
+    EXPECT_EQ(allocation_count, free_count);
+    EXPECT_EQ(values.elems, nullptr);
+}
+
+TEST_F(GeneratedDecoderTest, ArrayRecordPointerNullAndRequiredRules)
+{
+    VecEnvelope envelope{};
+    json_parser parser{};
+    json_parser_init(&parser, &allocator, slice(R"({"optional":null,"required":[]})"));
+    ASSERT_TRUE(decodeVecEnvelope(&parser, &envelope));
+    EXPECT_EQ(envelope.optional, nullptr);
+    ASSERT_NE(envelope.required, nullptr);
+    EXPECT_EQ(envelope.required->elems, nullptr);
+    EXPECT_EQ(envelope.required->len, 0U);
+    EXPECT_EQ(envelope.required->cap, 0U);
+    EXPECT_EQ(allocation_count, 1U);
+    releaseVecEnvelope(&allocator, &envelope);
+    EXPECT_EQ(allocation_count, free_count);
+
+    parser = {};
+    envelope = {};
+    allocation_count = 0;
+    free_count = 0;
+    json_parser_init(&parser, &allocator, slice(R"({"required":null})"));
+    EXPECT_FALSE(decodeVecEnvelope(&parser, &envelope));
+    EXPECT_EQ(parser.error.code, JSON_ERROR_OTHER_NULL_REQUIRED_VALUE);
+    EXPECT_EQ(allocation_count, 0U);
+
+    parser = {};
+    envelope = {};
+    json_parser_init(&parser, &allocator, slice("{}"));
+    EXPECT_FALSE(decodeVecEnvelope(&parser, &envelope));
+    EXPECT_EQ(parser.error.code, JSON_ERROR_OTHER_MISSING_REQUIRED_KEY);
+    EXPECT_EQ(allocation_count, 0U);
+}
+
+TEST_F(GeneratedDecoderTest, ArrayRecordElementFailureRollsBackCurrentSlot)
+{
+    StringSlots values{};
+    json_parser parser{};
+    json_parser_init(&parser, &allocator, slice(R"(["first",1])"));
+    EXPECT_FALSE(decodeStringSlots(&parser, &values));
+    EXPECT_EQ(parser.error.code, JSON_ERROR_TYPE_MISMATCH);
+    EXPECT_EQ(values.elems, nullptr);
+    EXPECT_EQ(values.cap, 0U);
+    EXPECT_EQ(allocation_count, free_count);
+}
+
+TEST_F(GeneratedDecoderTest, ArrayRecordAllocatorFailureRollsBack)
+{
+    StringSlots values{};
+    json_parser parser{};
+    allocation_limit = 1;
+    json_parser_init(&parser, &allocator, slice(R"(["first"])"));
+    EXPECT_FALSE(decodeStringSlots(&parser, &values));
+    EXPECT_EQ(parser.error.code, JSON_ERROR_OTHER_NO_MEMORY);
+    EXPECT_EQ(values.elems, nullptr);
+    EXPECT_EQ(values.cap, 0U);
+    EXPECT_EQ(allocation_count, 1U);
+    EXPECT_EQ(free_count, 1U);
+}
+
+TEST_F(GeneratedDecoderTest, NarrowLengthOverflowReportsArrayRangeAndRollsBack)
+{
+    std::string input = "[";
+    for (int index = 0; index < 256; ++index) {
+        if (index != 0) input += ',';
+        input += '0';
+    }
+    input += ']';
+
+    NarrowIntVec values{};
+    json_parser parser{};
+    json_parser_init(&parser, &allocator, {input.data(), input.data() + input.size()});
+    EXPECT_FALSE(decodeNarrowIntVec(&parser, &values));
+    EXPECT_EQ(parser.error.code, JSON_ERROR_RANGE_ARRAY_LENGTH);
+    EXPECT_EQ(values.elems, nullptr);
+    EXPECT_EQ(values.len, 0U);
+    EXPECT_EQ(allocation_count, free_count);
 }
 
 }  // namespace

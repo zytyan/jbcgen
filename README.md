@@ -17,6 +17,14 @@ typedef struct User {
   size_t itemCount;
 } User;
 
+/// 将结构体本身映射为 JSON 数组；匿名 typedef 同样支持
+/// @jsonStruct(asarray, elems=elems, len=len, cap=cap)
+typedef struct {
+  Item *elems;
+  size_t len;
+  size_t cap;
+} ItemVec;
+
 /// @jsonDecode
 bool decodeUser(json_parser *parser, User *user);
 
@@ -34,6 +42,8 @@ PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
 
 使用 `--dump-ir schema|decode|release|all` 可将只读调试文本输出到 stderr。
 
+数组容器的 `elems` 必须指定，`len`、`cap` 可独立省略。JSON `[]` 不申请元素缓冲区，结果为 `elems == NULL` 且已有计数字段为 0；`cap` 保存实际可用元素容量。
+
 ## 架构
 
 Clang JSON AST 和文档注释先构建纯描述性的 Schema IR。Decode Plan 与 Release Plan 分别直接从 Schema IR 生成；C generator 再分别消费两种 Plan。未来的 Encode Plan 也将直接从 Schema IR 生成。
@@ -45,3 +55,5 @@ Python 前端和注解说明见 [annotation_parser/README.md](annotation_parser/
 `runtime` 提供单遍扫描的 pull parser、结构化错误、字符串与动态数组辅助函数。生成的 decode 输出对象必须预先全零；失败时会回滚为全零，成功后使用对应的 cleanup 函数释放。
 
 当前使用 Python 3.13、Clang、C11，并按 64 位 LP64 数据模型解释基础整数类型。
+
+构建依赖为 Python 3.13、Clang 和 CMake；运行 C/C++ 回归测试还需要支持 C++17 的编译器与 GoogleTest。生成的 C 代码只依赖本仓库 `runtime`。

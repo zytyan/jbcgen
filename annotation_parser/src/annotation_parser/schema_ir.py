@@ -305,10 +305,17 @@ class SchemaBuilder:
             return placeholder
         self.building_records.add(name)
         self.types.setdefault(record_id, TypeSchema(record_id, TypeKind.RECORD, c_type))
-        fields = [self._build_field(field) for field in ast_record.fields]
-
         struct_annotation = _json_struct_annotation(ast_record.annotations, ast_record.location)
         is_array = _flag(struct_annotation, "asarray")
+        if is_array:
+            elems_name = _one(struct_annotation, "elems")
+            elems_ast = next(
+                (field for field in ast_record.fields if field.name == elems_name), None
+            )
+            if elems_ast is not None:
+                self._validate_array_elems_declaration(elems_ast)
+        fields = [self._build_field(field) for field in ast_record.fields]
+
         array_storage = self._build_array_storage(ast_record, fields, struct_annotation) if is_array else None
 
         names = {field.name: field for field in fields}
@@ -391,14 +398,17 @@ class SchemaBuilder:
         return ArrayStorageSchema(elems_name, element_type_id, length_name, capacity_name)
 
     def _resolve_array_element_type(self, field: AstField) -> str:
+        self._validate_array_elems_declaration(field)
         text = re.sub(r"\b(const|volatile|restrict)\b", "", field.type_name).strip()
         text = re.sub(r"\s+", " ", text)
-        if not text.endswith("*"):
-            raise AnnotationError("array record elems field must be a non-void pointer", field.location)
         pointee = text[:-1].strip()
-        if pointee == "void":
-            raise AnnotationError("array record elems field must be a non-void pointer", field.location)
         return self._resolve_type(pointee, None, field.location)
+
+    def _validate_array_elems_declaration(self, field: AstField) -> None:
+        text = re.sub(r"\b(const|volatile|restrict)\b", "", field.type_name).strip()
+        text = re.sub(r"\s+", " ", text)
+        if not text.endswith("*") or text[:-1].strip() == "void":
+            raise AnnotationError("array record elems field must be a non-void pointer", field.location)
 
     def _build_field(self, field: AstField) -> FieldSchema:
         annotation = _json_annotation(field.annotations, field.location)

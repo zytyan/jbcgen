@@ -164,6 +164,11 @@ class SchemaIrTest(unittest.TestCase):
                 "@jsonStruct(asarray, elems=elems)",
                 "must be a non-void pointer",
             ),
+            (
+                (field("elems", "void *"),),
+                "@jsonStruct(asarray, elems=elems)",
+                "must be a non-void pointer",
+            ),
         )
         for fields, annotation, message in cases:
             record = AstRecord(
