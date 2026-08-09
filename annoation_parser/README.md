@@ -4,12 +4,20 @@
 
 - lexer & parser 已完成
 - Schema IR: 仅有一个框架
-- Decode Plan IR： 未完成
+- Decode Plan IR： 无
+- Generator: 无
 
 ## 生成目标
 
 生成目标分为两种，一种为直接生成C语言解码代码，另一种则是生成VM bytecode，目前主力先实现直接C语言解码。
+### Schama IR
+用于描述结构体的形状和其上的标签。
 
+### Decode Plan IR
+用于指导Decode代码的生成。
+
+### Generator
+用于从Decode Plan IR中实际生成代码，目前的想法是支持C Generator（优先）和VM bytecode Generator（暂定，目前不实现）
 
 ### VM bytecode定义（未完成）
 
