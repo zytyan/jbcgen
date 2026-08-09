@@ -114,6 +114,40 @@ TEST_F(JsonPullTest, ConsumeComma)
     EXPECT_TRUE(result);
 }
 
+TEST_F(JsonPullTest, ConsumeCommaReportsMissingComma)
+{
+    json_parser parser;
+    json_parser_init(&parser, &allocator, make_slice("null"));
+    EXPECT_FALSE(json_consume_comma(&parser));
+    EXPECT_EQ(parser.error.code, JSON_ERROR_SYNTAX_EXPECTED_COMMA);
+}
+
+TEST_F(JsonPullTest, FormatsGeneratorErrors)
+{
+    struct {
+        json_error_code code;
+        const char *expected;
+    } cases[] = {
+        {JSON_ERROR_RANGE_STRING_LENGTH, "string length violates limit 7"},
+        {JSON_ERROR_RANGE_ARRAY_LENGTH, "array length violates limit 7"},
+        {JSON_ERROR_OTHER_MISSING_REQUIRED_KEY, "missing required key: value"},
+        {JSON_ERROR_OTHER_NULL_REQUIRED_VALUE, "required value is null: value"},
+        {JSON_ERROR_OTHER_EMBEDDED_NUL, "C string contains embedded NUL"},
+    };
+    for (const auto &item : cases) {
+        json_parser parser;
+        json_parser_init(&parser, &allocator, make_slice("null"));
+        json_error_detail detail = {};
+        detail.range.limit = 7;
+        if (item.code == JSON_ERROR_OTHER_MISSING_REQUIRED_KEY ||
+            item.code == JSON_ERROR_OTHER_NULL_REQUIRED_VALUE) {
+            detail.other.context = {"value", "value" + 5};
+        }
+        json_set_error(&parser, item.code, &detail);
+        EXPECT_NE(format_error(parser).find(item.expected), std::string::npos);
+    }
+}
+
 TEST_F(JsonPullTest, ConsumeColon)
 {
     json_parser parser;

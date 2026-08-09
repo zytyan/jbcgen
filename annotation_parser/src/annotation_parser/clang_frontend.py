@@ -101,15 +101,84 @@ def _comment_text(node: dict[str, Any]) -> str:
     return "\n".join(pieces)
 
 
+def _is_trailing_source_comment(node: dict[str, Any], source: str) -> bool:
+    begin = node.get("range", {}).get("begin", {})
+    offset = begin.get("offset")
+    if offset is None:
+        return False
+    offset = int(offset)
+    line_start = source.rfind("\n", 0, offset) + 1
+    prefix = source[line_start:offset]
+    markers = [position for marker in ("///", "/**") if (position := prefix.rfind(marker)) >= 0]
+    if not markers:
+        return False
+    return bool(prefix[: max(markers)].strip())
+
+
+def _leading_source_comment(node: dict[str, Any], source: str) -> str:
+    begin = node.get("range", {}).get("begin", {})
+    offset = begin.get("offset")
+    if offset is None:
+        return ""
+    line_start = source.rfind("\n", 0, int(offset)) + 1
+    prefix = source[:line_start].splitlines()
+    if not prefix:
+        return ""
+    index = len(prefix) - 1
+    stripped = prefix[index].strip()
+    if stripped.startswith("///"):
+        comments: list[str] = []
+        while index >= 0 and prefix[index].strip().startswith("///"):
+            comments.append(prefix[index].strip()[3:])
+            index -= 1
+        return "\n".join(reversed(comments))
+    if stripped.endswith("*/"):
+        comments = []
+        while index >= 0:
+            line = prefix[index].strip()
+            comments.append(line)
+            if "/**" in line:
+                before, _, after = line.partition("/**")
+                if before.strip():
+                    return ""
+                comments[-1] = after
+                break
+            index -= 1
+        else:
+            return ""
+        text = "\n".join(reversed(comments))
+        text = text.rsplit("*/", 1)[0]
+        return "\n".join(line.lstrip("* ") for line in text.splitlines())
+    return ""
+
+
 def _node_annotations(node: dict[str, Any], default_file: Path, source: str) -> tuple[Annotation, ...]:
     location = _location(node, default_file)
+    loc = node.get("loc", {})
+    offset = loc.get("offset")
+    token_length = int(loc.get("tokLen", 0))
+    node_name = node.get("name", "")
+    belongs_to_default = (
+        loc.get("file") == str(default_file)
+        or (
+            "file" not in loc
+            and offset is not None
+            and source[int(offset) : int(offset) + token_length] == node_name
+        )
+    )
+    if belongs_to_default:
+        leading = _leading_source_comment(node, source)
+        if leading:
+            parsed = parse_annotations(leading, location)
+            if parsed:
+                return parsed
     annotations: list[Annotation] = []
     for child in node.get("inner", ()):
-        if child.get("kind") == "FullComment":
+        if child.get("kind") == "FullComment" and not _is_trailing_source_comment(child, source):
             annotations.extend(parse_annotations(_comment_text(child), location))
 
     # Clang does not attach a documentation comment placed after a field.
-    if node.get("kind") == "FieldDecl" and location.file == str(default_file):
+    if not annotations and node.get("kind") == "FieldDecl" and belongs_to_default:
         end = node.get("range", {}).get("end", {})
         offset = end.get("offset")
         token_length = end.get("tokLen", 0)

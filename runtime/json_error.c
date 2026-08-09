@@ -119,6 +119,12 @@ static size_t error_body_len(const json_error *error) {
   case JSON_ERROR_RANGE_NUMBER_LENGTH:
     return sizeof("number length exceeds limit ") - 1 +
            decimal_len(error->detail.range.limit);
+  case JSON_ERROR_RANGE_STRING_LENGTH:
+    return sizeof("string length violates limit ") - 1 +
+           decimal_len(error->detail.range.limit);
+  case JSON_ERROR_RANGE_ARRAY_LENGTH:
+    return sizeof("array length violates limit ") - 1 +
+           decimal_len(error->detail.range.limit);
   case JSON_ERROR_RANGE_DEPTH:
     return sizeof("JSON depth exceeds limit ") - 1 +
            decimal_len(error->detail.range.limit);
@@ -136,6 +142,21 @@ static size_t error_body_len(const json_error *error) {
     }
     return sizeof("duplicate key: ") - 1 + context_len;
   }
+  case JSON_ERROR_OTHER_MISSING_REQUIRED_KEY:
+  case JSON_ERROR_OTHER_NULL_REQUIRED_VALUE: {
+    size_t context_len = 0;
+    if (error->detail.other.context.begin != NULL &&
+        error->detail.other.context.end != NULL) {
+      context_len = (size_t)(error->detail.other.context.end -
+                             error->detail.other.context.begin);
+    }
+    size_t prefix = error->code == JSON_ERROR_OTHER_MISSING_REQUIRED_KEY
+                        ? sizeof("missing required key: ") - 1
+                        : sizeof("required value is null: ") - 1;
+    return prefix + context_len;
+  }
+  case JSON_ERROR_OTHER_EMBEDDED_NUL:
+    return sizeof("C string contains embedded NUL") - 1;
   case JSON_ERROR_OTHER_INVALID_STATE:
     return sizeof("invalid parser state") - 1;
   case JSON_ERROR_NONE:
@@ -219,6 +240,14 @@ static void render_error(const json_parser *parser, char *dst,
     error_writer_printf(&writer, "number length exceeds limit %zu",
                         error->detail.range.limit);
     break;
+  case JSON_ERROR_RANGE_STRING_LENGTH:
+    error_writer_printf(&writer, "string length violates limit %zu",
+                        error->detail.range.limit);
+    break;
+  case JSON_ERROR_RANGE_ARRAY_LENGTH:
+    error_writer_printf(&writer, "array length violates limit %zu",
+                        error->detail.range.limit);
+    break;
   case JSON_ERROR_RANGE_DEPTH:
     error_writer_printf(&writer, "JSON depth exceeds limit %zu",
                         error->detail.range.limit);
@@ -239,6 +268,24 @@ static void render_error(const json_parser *parser, char *dst,
                           (size_t)(error->detail.other.context.end -
                                    error->detail.other.context.begin));
     }
+    break;
+  case JSON_ERROR_OTHER_MISSING_REQUIRED_KEY:
+  case JSON_ERROR_OTHER_NULL_REQUIRED_VALUE: {
+    const char *prefix = error->code == JSON_ERROR_OTHER_MISSING_REQUIRED_KEY
+                             ? "missing required key: "
+                             : "required value is null: ";
+    error_writer_append(&writer, prefix, strlen(prefix));
+    if (error->detail.other.context.begin != NULL &&
+        error->detail.other.context.end != NULL) {
+      error_writer_append(&writer, error->detail.other.context.begin,
+                          (size_t)(error->detail.other.context.end -
+                                   error->detail.other.context.begin));
+    }
+    break;
+  }
+  case JSON_ERROR_OTHER_EMBEDDED_NUL:
+    error_writer_append(&writer, "C string contains embedded NUL",
+                        sizeof("C string contains embedded NUL") - 1);
     break;
   case JSON_ERROR_OTHER_INVALID_STATE:
     error_writer_append(&writer, "invalid parser state",

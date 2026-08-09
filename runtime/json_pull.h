@@ -49,6 +49,9 @@ bool json_object_try_end(json_parser *parser);
 
 bool json_try_consume_comma(json_parser *parser);
 
+// 必须消费逗号；不存在时设置 JSON_ERROR_SYNTAX_EXPECTED_COMMA。
+bool json_consume_comma(json_parser *parser);
+
 // 最后一个元素没有尾随逗号，所以冒号必然要consume，但逗号不用，所以逗号仅仅try consume
 bool json_consume_colon(json_parser *parser);
 

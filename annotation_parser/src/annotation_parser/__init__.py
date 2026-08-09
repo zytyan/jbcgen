@@ -9,6 +9,7 @@ from .plan_ir import (
     format_decode_plan,
     format_release_plan,
 )
+from .c_generator import generate_c
 
 __all__ = [
     "Annotation",
@@ -24,6 +25,7 @@ __all__ = [
     "build_release_plan",
     "format_decode_plan",
     "format_release_plan",
+    "generate_c",
     "parse_annotations",
 ]
 

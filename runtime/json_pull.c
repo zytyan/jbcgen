@@ -508,6 +508,20 @@ bool json_try_consume_comma(json_parser *parser)
     return json_try_consume_token(parser, JSON_TOKEN_COMMA);
 }
 
+bool json_consume_comma(json_parser *parser)
+{
+    if (json_try_consume_token(parser, JSON_TOKEN_COMMA)) {
+        return true;
+    }
+    if (parser->valid) {
+        json_error_detail detail = {0};
+        detail.syntax.expected = JSON_TOKEN_COMMA;
+        detail.syntax.actual = json_peek_token(parser)->kind;
+        json_set_error(parser, JSON_ERROR_SYNTAX_EXPECTED_COMMA, &detail);
+    }
+    return false;
+}
+
 // 最后一个元素没有尾随逗号，所以冒号必然要consume，但逗号不用，所以逗号仅仅try consume
 bool json_consume_colon(json_parser *parser)
 {
