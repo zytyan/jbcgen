@@ -25,6 +25,8 @@ Clang frontend 负责 typedef 展开以及基础类型、enum、record、指针�
 
 `GeneratePlan` 是唯一生成计划。每个 `TypePlan` 同时保存 decode/release helper、字段路径、排序后的 key 表、类型依赖及失败回滚目标；类型和约束仍引用 Schema，不复制。Schema 和 GeneratePlan 均能打印确定性调试文本；打印结果不能反向解析，也不承诺跨版本兼容。
 
+C generator 使用 10 个固定完整模板，并用小型 renderer 填充类型相关语句。对象 key entry 由 `key`、seen/field ID 和 decode callback 组成，按 UTF-8 `(len, memcmp)` 排序后由 runtime 二分查找。对象主 decoder 只处理 JSON 对象控制流、重复 key 与 required 检查；每个字段的解码在独立的 `jbc_decode_<Record>_field_<path>` 函数中，便于阅读生成结果。
+
 ## CLI
 
 ```text

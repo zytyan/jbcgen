@@ -16,12 +16,12 @@ static int json_key_compare(const json_slice *left, const json_slice *right)
     return memcmp(left->ptr, right->ptr, left->len);
 }
 
-bool json_key_dispatch(const json_key_map *map, const json_slice *key, uint32_t *id)
+const json_key_entry *json_key_dispatch(const json_key_map *map, const json_slice *key)
 {
-    if (map == NULL || key == NULL || id == NULL ||
+    if (map == NULL || key == NULL ||
         (map->len != 0 && map->entries == NULL) ||
         (key->len != 0 && key->ptr == NULL)) {
-        return false;
+        return NULL;
     }
 
     size_t begin = 0;
@@ -31,8 +31,7 @@ bool json_key_dispatch(const json_key_map *map, const json_slice *key, uint32_t 
         const json_key_entry *entry = &map->entries[middle];
         const int order = json_key_compare(key, &entry->key);
         if (order == 0) {
-            *id = entry->id;
-            return true;
+            return entry;
         }
         if (order < 0) {
             end = middle;
@@ -40,5 +39,5 @@ bool json_key_dispatch(const json_key_map *map, const json_slice *key, uint32_t 
             begin = middle + 1;
         }
     }
-    return false;
+    return NULL;
 }

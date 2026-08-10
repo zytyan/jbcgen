@@ -11,9 +11,14 @@
 extern "C" {
 #endif
 
+struct json_parser;
+
+typedef bool (*json_field_decode_fn)(struct json_parser *parser, void *object);
+
 typedef struct json_key_entry {
     json_slice key;
     uint32_t id;
+    json_field_decode_fn decode;
 } json_key_entry;
 
 typedef struct json_key_map {
@@ -22,7 +27,7 @@ typedef struct json_key_map {
     size_t len;
 } json_key_map;
 
-bool json_key_dispatch(const json_key_map *map, const json_slice *key, uint32_t *id);
+const json_key_entry *json_key_dispatch(const json_key_map *map, const json_slice *key);
 
 #ifdef __cplusplus
 }

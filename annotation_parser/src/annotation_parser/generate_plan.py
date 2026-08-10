@@ -14,10 +14,17 @@ def _helper_name(prefix: str, record_id: str) -> str:
     return f"jbc_{prefix}_{_identifier(record_id.removeprefix('record:'))}"
 
 
+def _field_helper_name(owner_record_id: str, path: tuple[str, ...]) -> str:
+    owner = _identifier(owner_record_id.removeprefix("record:"))
+    field_path = "_".join(_identifier(part) for part in path)
+    return f"jbc_decode_{owner}_field_{field_path}"
+
+
 @dataclass(frozen=True)
 class KeyEntryPlan:
     key: str
     field_index: int
+    decode_helper: str
 
 
 @dataclass(frozen=True)
@@ -26,6 +33,7 @@ class FieldPlan:
     path: tuple[str, ...]
     length_path: tuple[str, ...] | None
     seen_index: int
+    decode_helper: str
 
 
 @dataclass(frozen=True)
@@ -70,7 +78,7 @@ class GeneratePlanBuilder:
         keys = tuple(
             sorted(
                 (
-                    KeyEntryPlan(key, field.seen_index)
+                    KeyEntryPlan(key, field.seen_index, field.decode_helper)
                     for field in fields
                     for key in (
                         self.fields[field.field_id].key,
@@ -104,15 +112,19 @@ class GeneratePlanBuilder:
         )
 
     def _object_fields(
-        self, record_id: str, prefix: tuple[str, ...] = ()
+        self,
+        owner_record_id: str,
+        record_id: str | None = None,
+        prefix: tuple[str, ...] = (),
     ) -> tuple[FieldPlan, ...]:
+        record_id = record_id or owner_record_id
         result: list[FieldPlan] = []
         for field in self.records[record_id].fields:
             if field.id in self.metadata or field.ignored:
                 continue
             path = prefix + (field.name,)
             if field.flatten:
-                result.extend(self._object_fields(field.type_id, path))
+                result.extend(self._object_fields(owner_record_id, field.type_id, path))
                 continue
             length = (
                 self.fields[field.length_field_id] if field.length_field_id else None
@@ -123,10 +135,17 @@ class GeneratePlanBuilder:
                     path,
                     prefix + (length.name,) if length else None,
                     len(result),
+                    _field_helper_name(owner_record_id, path),
                 )
             )
         return tuple(
-            FieldPlan(item.field_id, item.path, item.length_path, index)
+            FieldPlan(
+                item.field_id,
+                item.path,
+                item.length_path,
+                index,
+                item.decode_helper,
+            )
             for index, item in enumerate(result)
         )
 
@@ -192,7 +211,7 @@ def format_generate_plan(plan: GeneratePlan, schema: Schema) -> str:
             lines.append(
                 f"    field {'.'.join(field.path)} type={schema_field.type_id} "
                 f"keys={(schema_field.key, *schema_field.altkeys)!r} "
-                f"[{' '.join(flags)}]"
+                f"helper={field.decode_helper} [{' '.join(flags)}]"
             )
             if field.length_path:
                 lines.append(f"      length {'.'.join(field.length_path)}")
@@ -202,7 +221,10 @@ def format_generate_plan(plan: GeneratePlan, schema: Schema) -> str:
             lines.append(
                 "    key-order "
                 + repr(
-                    tuple((entry.key, entry.field_index) for entry in item.key_entries)
+                    tuple(
+                        (entry.key, entry.field_index, entry.decode_helper)
+                        for entry in item.key_entries
+                    )
                 )
             )
     return "\n".join(lines)

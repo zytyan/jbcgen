@@ -77,20 +77,27 @@ class CGeneratorTest(unittest.TestCase):
             self.assertEqual(process.returncode, 0, process.stderr + "\n" + source)
             self.assertIn("jbc_decode_Root", source)
             self.assertIn("jbc_release_Root", source)
-            self.assertIn("json_key_dispatch(&key_map", source)
-            self.assertIn('{{"identifier", 10}, 0}', source)
+            self.assertIn("json_key_dispatch(&jbc_decode_Root_key_map", source)
+            self.assertIn('{{"identifier", 10}, 0, jbc_decode_Root_field_id}', source)
+            self.assertIn(
+                "static bool jbc_decode_Root_field_id(json_parser *parser, void *object)",
+                source,
+            )
+            self.assertNotIn("switch (field_index)", source)
             self.assertLess(
-                source.index('{{"id", 2}, 0}'), source.index('{{"kind", 4}, 5}')
+                source.index('{{"id", 2}, 0,'), source.index('{{"kind", 4}, 5,')
             )
             self.assertLess(
-                source.index('{{"kind", 4}, 5}'), source.index('{{"name", 4}, 1}')
+                source.index('{{"kind", 4}, 5,'),
+                source.index('{{"name", 4}, 1,'),
             )
             self.assertLess(
-                source.index('{{"name", 4}, 1}'), source.index('{{"children", 8}, 2}')
+                source.index('{{"name", 4}, 1,'),
+                source.index('{{"children", 8}, 2,'),
             )
             self.assertLess(
-                source.index('{{"children", 8}, 2}'),
-                source.index('{{"identifier", 10}, 0}'),
+                source.index('{{"children", 8}, 2,'),
+                source.index('{{"identifier", 10}, 0,'),
             )
             self.assertIn("JSON_ERROR_OTHER_MISSING_REQUIRED_KEY", source)
             pointer_check = source.index(

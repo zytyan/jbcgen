@@ -64,12 +64,21 @@ class GeneratePlanTest(unittest.TestCase):
             [("id",), ("detail", "label"), ("items",)],
         )
         self.assertEqual([field.seen_index for field in root.fields], [0, 1, 2])
+        self.assertEqual(
+            [field.decode_helper for field in root.fields],
+            [
+                "jbc_decode_Root_field_id",
+                "jbc_decode_Root_field_detail_label",
+                "jbc_decode_Root_field_items",
+            ],
+        )
         self.assertEqual(root.rollback_helper, root.release_helper)
         self.assertEqual(
             [(item.key, item.field_index) for item in root.key_entries],
             [("id", 0), ("items", 2), ("label", 1), ("identifier", 0)],
         )
         self.assertEqual(root.fields[2].length_path, ("itemCount",))
+        self.assertEqual(root.key_entries[0].decode_helper, "jbc_decode_Root_field_id")
         self.assertEqual(
             schema.type_map()[schema.field_map()[root.fields[2].field_id].type_id].kind,
             TypeKind.DYNAMIC_ARRAY,
