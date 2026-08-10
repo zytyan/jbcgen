@@ -15,16 +15,16 @@ class JsonTokenizerTest : public ::testing::Test {
         allocator.free = free;
     }
 
-    static json_str_slice make_slice(const char *str)
+    static json_slice make_slice(const char *str)
     {
-        return {str, str + strlen(str)};
+        return {str, strlen(str)};
     }
 };
 
 TEST_F(JsonTokenizerTest, ParserInit)
 {
     json_parser parser;
-    json_str_slice slice = make_slice("null");
+    json_slice slice = make_slice("null");
     json_parser_init(&parser, &allocator, slice);
     EXPECT_TRUE(parser.valid);
     EXPECT_EQ(parser.current_token.kind, JSON_TOKEN_NULL);

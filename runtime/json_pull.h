@@ -37,7 +37,7 @@ bool json_decode_hex_string(json_parser *parser, uint64_t *out);
 
 bool json_decode_f64(json_parser *parser, double *out);
 
-bool json_decode_string(json_parser *parser, json_string *out);
+bool json_decode_string(json_parser *parser, json_cow_str *out);
 
 bool json_array_begin(json_parser *parser);
 

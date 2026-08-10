@@ -12,7 +12,7 @@ extern "C" {
 #endif
 
 typedef struct json_token {
-    json_str_slice str;
+    json_slice str;
     json_token_kind kind;
     json_source_location location;
 } json_token;
@@ -41,7 +41,7 @@ json_token *json_peek_token(json_parser *parser);
 // 空格，回车，制表符，若可能，也有注释
 void json_skip_trivia(json_parser *parser);
 
-void json_parser_init(json_parser *parser, json_allocator *allocator, json_str_slice input);
+void json_parser_init(json_parser *parser, json_allocator *allocator, json_slice input);
 
 #ifdef __cplusplus
 }

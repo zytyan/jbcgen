@@ -1,8 +1,9 @@
-#ifndef JSON_STR_SLICE
-#define JSON_STR_SLICE
+#ifndef JSON_STR_SLICE_H
+#define JSON_STR_SLICE_H
 
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
+
 #include "json_allocator.h"
 #include "json_error.h"
 
@@ -10,36 +11,59 @@
 extern "C" {
 #endif
 
-typedef struct json_str_slice {
-    const char *begin;
-    const char *end;
-} json_str_slice;
+typedef struct json_slice {
+    const char *ptr;
+    size_t len;
+} json_slice;
 
 typedef struct json_string {
-    json_str_slice text;
-    const char *tail;
-    void *owner;
-    bool writable;
+    char *ptr;
+    size_t len;
+    size_t cap;
 } json_string;
 
-size_t json_slice_len(const json_str_slice *s);
+typedef enum json_cow_str_kind {
+    JSON_COW_OWNED_STRING,
+    JSON_COW_MUT_BORROWED_STRING,
+    JSON_COW_CONST_BORROWED_SLICE,
+} json_cow_str_kind;
 
-bool json_slice_eq(const json_str_slice *s1, const json_str_slice *s2);
+typedef struct json_cow_str {
+    union {
+        json_string string;
+        json_slice slice;
+    };
+    json_cow_str_kind kind;
+} json_cow_str;
 
-bool json_slice_eq_str(const json_str_slice *s1, const char *s2);
+json_slice json_cow_str_as_slice(const json_cow_str *cow);
 
-// written 在成功和空间不足时都返回完整内容长度（不含 NUL）
-json_error_code json_slice_write_to_buf(const json_str_slice *s, char *buf, size_t len, size_t *written);
+json_slice json_string_as_slice(const json_string *string);
 
-void json_free_string(const json_allocator *allocator, json_string *str);
+size_t json_slice_len(const json_slice *slice);
 
-json_error_code json_slice_to_owned_string(const json_allocator *allocator, const json_str_slice *from, json_string *to);
+bool json_slice_eq(const json_slice *s1, const json_slice *s2);
 
-void json_string_borrow(const json_str_slice *slice, json_string *str);
+bool json_slice_eq_str(const json_slice *slice, const char *string);
 
-json_error_code json_string_into_owned_c_str(const json_allocator *allocator, json_string *str, char **out);
+// written 在成功和空间不足时都返回完整内容长度（不含 NUL）。
+json_error_code json_slice_write_to_buf(const json_slice *slice, char *buf, size_t len, size_t *written);
 
-json_error_code json_str_unescape(const json_allocator *allocator, const json_str_slice *from, json_string *to,
+void json_free_string(const json_allocator *allocator, json_string *string);
+
+void json_free_cow_str(const json_allocator *allocator, json_cow_str *cow);
+
+json_error_code json_slice_to_owned_string(const json_allocator *allocator, const json_slice *from,
+                                           json_string *to);
+
+void json_cow_str_borrow(const json_slice *slice, json_cow_str *cow);
+
+void json_cow_str_borrow_mut(char *ptr, size_t len, size_t cap, json_cow_str *cow);
+
+// 消费 cow；成功时 out 获得 allocator 所管理的 NUL 结尾字符串。
+json_error_code json_cow_str_into_owned_c_str(const json_allocator *allocator, json_cow_str *cow, char **out);
+
+json_error_code json_str_unescape(const json_allocator *allocator, const json_slice *from, json_string *to,
                                   size_t *error_offset);
 
 #ifdef __cplusplus

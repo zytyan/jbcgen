@@ -50,8 +50,7 @@ static void set_token_error(json_parser *parser, json_token *token, const char *
                             const json_error_detail *detail)
 {
     token->kind = JSON_TOKEN_ERROR;
-    token->str.begin = pos;
-    token->str.end = pos;
+    token->str = (json_slice){pos, 0};
     token->location = json_location_at(parser, pos);
     json_set_error_at(parser, code, detail, token->location);
 }
@@ -96,8 +95,7 @@ static bool try_tokenize_keyword(json_parser *parser, const char *keyword, json_
 
     advance_ascii(parser, len);
     token->kind = kind;
-    token->str.begin = begin;
-    token->str.end = end;
+    token->str = (json_slice){begin, len};
     return true;
 }
 
@@ -113,8 +111,7 @@ static void tokenize_str(json_parser *parser, json_token *token)
         unsigned char ch = (unsigned char)*parser->cursor;
         if (ch == '"') {
             advance_cursor(parser);
-            token->str.begin = begin;
-            token->str.end = parser->cursor;
+            token->str = (json_slice){begin, (size_t)(parser->cursor - begin)};
             token->location = begin_location;
             return;
         }
@@ -149,8 +146,7 @@ static void tokenize_number(json_parser *parser, json_token *token)
         cursor++;
     }
     advance_ascii(parser, (size_t)(cursor - parser->cursor));
-    token->str.begin = begin;
-    token->str.end = cursor;
+    token->str = (json_slice){begin, (size_t)(cursor - begin)};
     token->kind = is_float ? JSON_TOKEN_FLOAT : JSON_TOKEN_INT;
 }
 
@@ -187,8 +183,7 @@ static void tokenize_punc(json_parser *parser, json_token *token)
             return;
     }
     advance_cursor(parser);
-    token->str.begin = begin;
-    token->str.end = parser->cursor;
+    token->str = (json_slice){begin, (size_t)(parser->cursor - begin)};
 }
 
 static void json_next_token_impl(json_parser *parser, json_token *token)
@@ -197,8 +192,7 @@ static void json_next_token_impl(json_parser *parser, json_token *token)
     token->location = parser->cursor_location;
     if (parser->cursor >= parser->end) {
         token->kind = JSON_TOKEN_EOF;
-        token->str.begin = parser->end;
-        token->str.end = parser->end;
+        token->str = (json_slice){parser->end, 0};
         return;
     }
 
@@ -223,8 +217,7 @@ void json_advance_token(json_parser *parser)
     json_token token = {0};
     if (!parser->valid) {
         token.kind = JSON_TOKEN_ERROR;
-        token.str.begin = parser->cursor;
-        token.str.end = parser->cursor;
+        token.str = (json_slice){parser->cursor, 0};
         token.location = parser->error.location;
         parser->current_token = token;
         return;

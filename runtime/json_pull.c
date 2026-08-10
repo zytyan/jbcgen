@@ -9,12 +9,12 @@ void json_free_nullable(const json_allocator *allocator, void *ptr)
         allocator->free(ptr);
     }
 }
-void json_parser_init(json_parser *parser, json_allocator *allocator, json_str_slice input)
+void json_parser_init(json_parser *parser, json_allocator *allocator, json_slice input)
 {
     parser->allocator = allocator;
-    parser->begin = input.begin;
-    parser->cursor = input.begin;
-    parser->end = input.end;
+    parser->begin = input.ptr;
+    parser->cursor = input.ptr;
+    parser->end = input.ptr + input.len;
     parser->cursor_location = (json_source_location){0, 1, 1};
     parser->current_token = (json_token){0};
     parser->depth = 0;
@@ -137,7 +137,7 @@ enum json_number_kind {
     JSON_NUMBER_F64,
 };
 
-static bool json_parse_number(json_parser *parser, json_str_slice *slice, enum json_number_kind kind,
+static bool json_parse_number(json_parser *parser, json_slice *slice, enum json_number_kind kind,
                               union json_number *num)
 {
 #define JSON_NUMBER_STACK_SIZE 32
@@ -149,7 +149,7 @@ static bool json_parse_number(json_parser *parser, json_str_slice *slice, enum j
         json_error_detail detail = {0};
         detail.range.target = JSON_RANGE_NUMBER_LENGTH;
         detail.range.limit = parser->max_number_len;
-        detail.range.value = (json_error_span){slice->begin, slice->end};
+        detail.range.value = (json_error_span){slice->ptr, slice->ptr + slice->len};
         json_set_error(parser, JSON_ERROR_RANGE_NUMBER_LENGTH, &detail);
         return false;
     }
@@ -190,7 +190,7 @@ static bool json_parse_number(json_parser *parser, json_str_slice *slice, enum j
     if (errno == ERANGE || negative_u64 || outside_c_type) {
         json_error_detail detail = {0};
         detail.range.target = JSON_RANGE_NUMBER_VALUE;
-        detail.range.value = (json_error_span){slice->begin, slice->end};
+        detail.range.value = (json_error_span){slice->ptr, slice->ptr + slice->len};
         json_set_error(parser, JSON_ERROR_RANGE_NUMBER, &detail);
         json_free_nullable(parser->allocator, heap_buf);
         return false;
@@ -209,11 +209,11 @@ static bool json_parse_number(json_parser *parser, json_str_slice *slice, enum j
     return true;
 }
 
-static void json_set_integer_range_error(json_parser *parser, const json_str_slice *slice)
+static void json_set_integer_range_error(json_parser *parser, const json_slice *slice)
 {
     json_error_detail detail = {0};
     detail.range.target = JSON_RANGE_NUMBER_VALUE;
-    detail.range.value = (json_error_span){slice->begin, slice->end};
+    detail.range.value = (json_error_span){slice->ptr, slice->ptr + slice->len};
     json_set_error(parser, JSON_ERROR_RANGE_NUMBER, &detail);
 }
 
@@ -221,9 +221,9 @@ static bool json_decode_i64_in_range(json_parser *parser, int64_t *out, int64_t 
 {
     union json_number num = {0};
     json_token *token = json_peek_token(parser);
-    json_str_slice slice;
+    json_slice slice;
     if (token->kind == JSON_TOKEN_STRING) {
-        slice = (json_str_slice){token->str.begin + 1, token->str.end - 1};
+        slice = (json_slice){token->str.ptr + 1, token->str.len - 2};
     } else {
         if (!json_expect_type(parser, JSON_TOKEN_INT, JSON_EXPECTED_INTEGER)) {
             return false;
@@ -311,9 +311,9 @@ bool json_decode_u64(json_parser *parser, uint64_t *out)
 {
     union json_number num = {0};
     json_token *token = json_peek_token(parser);
-    json_str_slice slice;
+    json_slice slice;
     if (token->kind == JSON_TOKEN_STRING) {
-        slice = (json_str_slice){token->str.begin + 1, token->str.end - 1};
+        slice = (json_slice){token->str.ptr + 1, token->str.len - 2};
     } else {
         if (!json_expect_type(parser, JSON_TOKEN_INT, JSON_EXPECTED_INTEGER)) {
             return false;
@@ -337,7 +337,7 @@ bool json_decode_hex_string(json_parser *parser, uint64_t *out)
 
     json_token *token = json_peek_token(parser);
     json_source_location value_location = token->location;
-    json_error_span value_span = {token->str.begin, token->str.end};
+    json_error_span value_span = {token->str.ptr, token->str.ptr + token->str.len};
     bool is_hex_string = token->kind == JSON_TOKEN_STRING || token->kind == JSON_TOKEN_ESCAPE_STRING;
     bool is_integer = token->kind == JSON_TOKEN_INT;
     if (!is_hex_string && !is_integer) {
@@ -345,24 +345,20 @@ bool json_decode_hex_string(json_parser *parser, uint64_t *out)
         return false;
     }
 
-    json_string decoded = {0};
+    json_cow_str decoded = {0};
     if (is_hex_string) {
         if (!json_decode_string(parser, &decoded)) {
-            json_free_string(parser->allocator, &decoded);
+            json_free_cow_str(parser->allocator, &decoded);
             return false;
         }
     } else {
-        json_error_code code = json_slice_to_owned_string(parser->allocator, &token->str, &decoded);
-        if (code != JSON_ERROR_NONE) {
-            json_set_error(parser, code, NULL);
-            return false;
-        }
+        json_cow_str_borrow(&token->str, &decoded);
     }
 
     char *text = NULL;
-    json_error_code string_code = json_string_into_owned_c_str(parser->allocator, &decoded, &text);
+    json_error_code string_code = json_cow_str_into_owned_c_str(parser->allocator, &decoded, &text);
     if (string_code != JSON_ERROR_NONE) {
-        json_free_string(parser->allocator, &decoded);
+        json_free_cow_str(parser->allocator, &decoded);
         json_set_error_at(parser, string_code, NULL, value_location);
         return false;
     }
@@ -400,7 +396,7 @@ bool json_decode_f64(json_parser *parser, double *out)
     union json_number num = {0};
     json_token *token = json_peek_token(parser);
     if (token->kind == JSON_TOKEN_STRING) {
-        json_str_slice slice = {token->str.begin + 1, token->str.end - 1};
+        json_slice slice = {token->str.ptr + 1, token->str.len - 2};
         if (json_parse_number(parser, &slice, JSON_NUMBER_F64, &num)) {
             *out = num.f64;
             json_advance_token(parser);
@@ -420,33 +416,36 @@ bool json_decode_f64(json_parser *parser, double *out)
     return false;
 }
 
-bool json_decode_string(json_parser *parser, json_string *out)
+bool json_decode_string(json_parser *parser, json_cow_str *out)
 {
     json_token *token = json_peek_token(parser);
     if (token->kind == JSON_TOKEN_STRING) {
-        json_free_string(parser->allocator, out);
-        json_str_slice inner = {token->str.begin + 1, token->str.end - 1};
-        json_string_borrow(&inner, out);
+        json_free_cow_str(parser->allocator, out);
+        json_slice inner = {token->str.ptr + 1, token->str.len - 2};
+        json_cow_str_borrow(&inner, out);
         json_advance_token(parser);
         return true;
     } else if (token->kind == JSON_TOKEN_ESCAPE_STRING) {
-        json_str_slice inner = {token->str.begin + 1, token->str.end - 1};
-        // 若成功，则所有权最后直接移交给结构体内的 char*，所以要多申请一个字节用于存放 \0
+        json_slice inner = {token->str.ptr + 1, token->str.len - 2};
+        json_string decoded = {0};
         size_t error_offset = 0;
-        json_error_code code = json_str_unescape(parser->allocator, &inner, out, &error_offset);
+        json_error_code code = json_str_unescape(parser->allocator, &inner, &decoded, &error_offset);
         if (code != JSON_ERROR_NONE) {
-            const char *error_pos = inner.begin + error_offset;
-            if (error_pos > inner.end) {
-                error_pos = inner.end;
+            const char *error_pos = inner.ptr + error_offset;
+            if (error_pos > inner.ptr + inner.len) {
+                error_pos = inner.ptr + inner.len;
             }
             json_error_detail detail = {0};
             detail.escape.relative_offset = error_offset;
-            if (error_pos < inner.end) {
+            if (error_pos < inner.ptr + inner.len) {
                 detail.escape.character = (unsigned char)*error_pos;
             }
             json_set_error_at(parser, code, &detail, json_location_at(parser, error_pos));
             return false;
         }
+        json_free_cow_str(parser->allocator, out);
+        out->string = decoded;
+        out->kind = JSON_COW_OWNED_STRING;
         json_advance_token(parser);
         return true;
     } else {

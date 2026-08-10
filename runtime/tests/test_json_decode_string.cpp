@@ -18,9 +18,9 @@ class JsonPullTest : public ::testing::Test {
         allocator.free = free;
     }
 
-    static json_str_slice make_slice(const char *str)
+    static json_slice make_slice(const char *str)
     {
-        return {str, str + strlen(str)};
+        return {str, strlen(str)};
     }
 
     static std::string format_error(const json_parser &parser)
@@ -56,18 +56,19 @@ TEST_F(JsonPullTest, DecodeString)
     for (size_t i = 0; i < sizeof(success_cases) / sizeof(success_cases[0]); i++) {
         json_parser parser;
         json_parser_init(&parser, &allocator, make_slice(success_cases[i].input));
-        json_string result = {0};
+        json_cow_str result = {0};
         bool decode_result = json_decode_string(&parser, &result);
         EXPECT_TRUE(decode_result) << "Input: " << success_cases[i].input << "\n"
                                    << format_error(parser);
         EXPECT_TRUE(parser.valid) << "Input: " << success_cases[i].input << "\n"
                                   << format_error(parser);
-        auto got = std::string(result.text.begin, result.text.end);
-        EXPECT_TRUE(json_slice_eq_str(&result.text, success_cases[i].expected))
+        json_slice result_slice = json_cow_str_as_slice(&result);
+        auto got = std::string(result_slice.ptr, result_slice.len);
+        EXPECT_TRUE(json_slice_eq_str(&result_slice, success_cases[i].expected))
             << "Input: " << success_cases[i].input << "\n"
             << "Expected: " << success_cases[i].expected << "(size: " << strlen(success_cases[i].expected) << ")\n"
             << "Got: " << got << "(size: " << got.size() << ")\n";
-        json_free_string(&allocator, &result);
+        json_free_cow_str(&allocator, &result);
     }
 
     struct {
@@ -85,12 +86,12 @@ TEST_F(JsonPullTest, DecodeString)
     for (size_t i = 0; i < sizeof(failure_cases) / sizeof(failure_cases[0]); i++) {
         json_parser parser;
         json_parser_init(&parser, &allocator, make_slice(failure_cases[i].input));
-        json_string result = {0};
+        json_cow_str result = {0};
         bool decode_result = json_decode_string(&parser, &result);
         EXPECT_FALSE(decode_result) << "Input: " << failure_cases[i].input << " should fail";
         EXPECT_FALSE(parser.valid) << "Input: " << failure_cases[i].input << " should be invalid";
         EXPECT_EQ(parser.error.code, failure_cases[i].code) << failure_cases[i].description;
         EXPECT_EQ(parser.error.location.offset, failure_cases[i].offset) << failure_cases[i].description;
-        EXPECT_EQ(result.owner, nullptr);
+        EXPECT_EQ(json_cow_str_as_slice(&result).ptr, nullptr);
     }
 }

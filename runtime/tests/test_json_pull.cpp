@@ -17,9 +17,9 @@ class JsonPullTest : public ::testing::Test {
         allocator.free = free;
     }
 
-    static json_str_slice make_slice(const char *str)
+    static json_slice make_slice(const char *str)
     {
-        return {str, str + strlen(str)};
+        return {str, strlen(str)};
     }
 
     static std::string format_error(const json_parser &parser)
@@ -335,7 +335,7 @@ TEST_F(JsonPullTest, StructuredTypeErrorAndFormatting)
 {
     json_parser parser{};
     json_parser_init(&parser, &allocator, make_slice("\r\n  123"));
-    json_string value{};
+    json_cow_str value{};
     ASSERT_FALSE(json_decode_string(&parser, &value));
 
     EXPECT_EQ(parser.error.code, JSON_ERROR_TYPE_MISMATCH);
@@ -497,8 +497,8 @@ TEST_F(JsonPullTest, ReportsAllocationFailure)
     failing_allocator.malloc = [](size_t) -> void * { return nullptr; };
     json_parser parser{};
     json_parser_init(&parser, &failing_allocator, make_slice(R"json("\n")json"));
-    json_string value{};
+    json_cow_str value{};
     EXPECT_FALSE(json_decode_string(&parser, &value));
     EXPECT_EQ(parser.error.code, JSON_ERROR_OTHER_NO_MEMORY);
-    EXPECT_EQ(value.owner, nullptr);
+    EXPECT_EQ(json_cow_str_as_slice(&value).ptr, nullptr);
 }

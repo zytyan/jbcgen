@@ -29,9 +29,9 @@ void tracking_free(void *pointer)
     std::free(pointer);
 }
 
-json_str_slice slice(const char *text)
+json_slice slice(const char *text)
 {
-    return {text, text + std::strlen(text)};
+    return {text, std::strlen(text)};
 }
 
 class GeneratedDecoderTest : public ::testing::Test {
@@ -78,6 +78,18 @@ TEST_F(GeneratedDecoderTest, RequiredNullAndMissingAreDistinct)
     EXPECT_FALSE(decode(R"({"id":1,"age":18,"bases":[]})", &user, &parser));
     EXPECT_EQ(parser.error.code, JSON_ERROR_OTHER_MISSING_REQUIRED_KEY);
     EXPECT_EQ(allocation_count, 0U);
+}
+
+TEST_F(GeneratedDecoderTest, EscapedKeyUsesGeneratedDispatchMap)
+{
+    User user{};
+    json_parser parser{};
+    ASSERT_TRUE(decode(R"({"\u0069d":1,"age":18,"bases":[],"metadata":{}})", &user, &parser));
+    EXPECT_EQ(user.id, 1U);
+    // The escaped key is temporarily owned, then released after dispatch.
+    EXPECT_EQ(allocation_count, 1U);
+    EXPECT_EQ(free_count, 1U);
+    releaseUser(&allocator, &user);
 }
 
 TEST_F(GeneratedDecoderTest, EmptyStringIsAllocatedAndCleanupIsRepeatable)
@@ -284,7 +296,7 @@ TEST_F(GeneratedDecoderTest, NarrowLengthOverflowReportsArrayRangeAndRollsBack)
 
     NarrowIntVec values{};
     json_parser parser{};
-    json_parser_init(&parser, &allocator, {input.data(), input.data() + input.size()});
+    json_parser_init(&parser, &allocator, {input.data(), input.size()});
     EXPECT_FALSE(decodeNarrowIntVec(&parser, &values));
     EXPECT_EQ(parser.error.code, JSON_ERROR_RANGE_ARRAY_LENGTH);
     EXPECT_EQ(values.elems, nullptr);

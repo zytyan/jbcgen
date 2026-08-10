@@ -1,172 +1,130 @@
-#include <stdbool.h>
-#include <stddef.h>
-#include <string.h>
-#include <stdint.h>
 #include "json_str_slice.h"
 
-size_t json_slice_len(const json_str_slice *s)
+#include <stdint.h>
+#include <string.h>
+
+json_slice json_string_as_slice(const json_string *string)
 {
-    return s->end - s->begin;
+    return (json_slice){string->ptr, string->len};
 }
 
-bool json_slice_eq(const json_str_slice *s1, const json_str_slice *s2)
+size_t json_slice_len(const json_slice *slice)
 {
-    if (s1->begin == s2->begin && s1->end == s2->end) {
-        return true;
+    return slice->len;
+}
+
+json_slice json_cow_str_as_slice(const json_cow_str *cow)
+{
+    if (cow->kind == JSON_COW_CONST_BORROWED_SLICE) {
+        return cow->slice;
     }
-    if (json_slice_len(s1) != json_slice_len(s2)) {
+    return json_string_as_slice(&cow->string);
+}
+
+bool json_slice_eq(const json_slice *s1, const json_slice *s2)
+{
+    if (s1->len != s2->len) {
         return false;
     }
-    size_t len = json_slice_len(s1);
-    return memcmp(s1->begin, s2->begin, len) == 0;
+    return s1->len == 0 || s1->ptr == s2->ptr || memcmp(s1->ptr, s2->ptr, s1->len) == 0;
 }
 
-bool json_slice_eq_str(const json_str_slice *s1, const char *s2)
+bool json_slice_eq_str(const json_slice *slice, const char *string)
 {
-    size_t len = json_slice_len(s1);
-
-    for (size_t i = 0; i < len; i++) {
-        if (s2[i] == '\0' || s1->begin[i] != s2[i]) {
-            return false;
-        }
-    }
-
-    return s2[len] == '\0';
+    size_t len = strlen(string);
+    return slice->len == len && (len == 0 || memcmp(slice->ptr, string, len) == 0);
 }
 
-json_error_code json_slice_write_to_buf(const json_str_slice *s, char *buf, size_t len, size_t *written)
+json_error_code json_slice_write_to_buf(const json_slice *slice, char *buf, size_t len, size_t *written)
 {
-    size_t slen = json_slice_len(s);
     if (written != NULL) {
-        *written = slen;
+        *written = slice->len;
     }
-    if (slen + 1 > len) {
+    if (slice->len == SIZE_MAX || slice->len + 1 > len) {
         if (buf != NULL && len > 0) {
             buf[0] = '\0';
         }
         return JSON_ERROR_RANGE_BUFFER_TOO_SMALL;
     }
-    memcpy(buf, s->begin, slen);
-    buf[slen] = '\0';
+    if (slice->len != 0) {
+        memcpy(buf, slice->ptr, slice->len);
+    }
+    buf[slice->len] = '\0';
     return JSON_ERROR_NONE;
 }
 
-void json_free_string(const json_allocator *allocator, json_string *str)
+void json_free_string(const json_allocator *allocator, json_string *string)
 {
-    if (str->owner) {
-        allocator->free(str->owner);
+    if (string->ptr != NULL) {
+        allocator->free(string->ptr);
     }
-    *str = (json_string){0};
+    *string = (json_string){0};
 }
 
-static size_t json_string_cap(const json_string *str)
+void json_free_cow_str(const json_allocator *allocator, json_cow_str *cow)
 {
-    const char *real_begin = str->owner;
-    if (!real_begin) {
-        // 对于没有owner的string，是没有属于自己的空间的，所以cap是0
-        return 0;
+    if (cow->kind == JSON_COW_OWNED_STRING && cow->string.ptr != NULL) {
+        allocator->free(cow->string.ptr);
     }
-    return str->tail - real_begin;
-}
-static json_error_code json_string_ensure_cap(const json_allocator *allocator, json_string *str, size_t cap)
-{
-    if (str->writable && json_string_cap(str) >= cap) {
-        return JSON_ERROR_NONE;
-    }
-    char *new_buf = (char *)allocator->malloc(cap);
-    if (!new_buf) {
-        return JSON_ERROR_OTHER_NO_MEMORY;
-    }
-    size_t old_len = json_slice_len(&str->text);
-    if (old_len == 0) {
-        json_free_string(allocator, str);
-        str->text.begin = new_buf;
-        str->text.end = new_buf;
-        str->owner = new_buf;
-        str->tail = new_buf + cap;
-        str->writable = true;
-        return JSON_ERROR_NONE;
-    }
-    memcpy(new_buf, str->text.begin, old_len);
-    json_free_string(allocator, str);
-    str->owner = new_buf;
-    str->text.begin = new_buf;
-    str->text.end = new_buf + old_len;
-    str->tail = new_buf + cap;
-    str->writable = true;
-    return JSON_ERROR_NONE;
+    *cow = (json_cow_str){0};
 }
 
-static bool json_string_has_room_for_nul(const json_string *string)
+json_error_code json_slice_to_owned_string(const json_allocator *allocator, const json_slice *from,
+                                           json_string *to)
 {
-    return string->text.end < string->tail;
-}
-
-static size_t json_owned_string_remaind_cap(const json_string *str)
-{
-    return str->tail - str->text.end;
-}
-
-static void json_string_reset(json_string *str)
-{
-    str->text.begin = str->owner;
-    str->text.end = str->owner;
-}
-
-json_error_code json_slice_to_owned_string(const json_allocator *allocator, const json_str_slice *from, json_string *to)
-{
-    size_t len = json_slice_len(from);
-    size_t buf_size = len + 1;
-    char *buf = (char *)allocator->malloc(buf_size);
-    if (!buf) {
+    if (from->len == SIZE_MAX) {
+        *to = (json_string){0};
+        return JSON_ERROR_RANGE_BUFFER_TOO_SMALL;
+    }
+    size_t cap = from->len + 1;
+    char *ptr = allocator->malloc(cap);
+    if (ptr == NULL) {
         *to = (json_string){0};
         return JSON_ERROR_OTHER_NO_MEMORY;
     }
-    memcpy(buf, from->begin, len);
-    buf[len] = '\0';
-    to->text.begin = buf;
-    to->text.end = buf + len;
-    to->tail = buf + buf_size;
-    to->owner = buf;
-    to->writable = true;
+    if (from->len != 0) {
+        memcpy(ptr, from->ptr, from->len);
+    }
+    ptr[from->len] = '\0';
+    *to = (json_string){ptr, from->len, cap};
     return JSON_ERROR_NONE;
 }
 
-void json_string_borrow(const json_str_slice *slice, json_string *str)
+void json_cow_str_borrow(const json_slice *slice, json_cow_str *cow)
 {
-    str->text.begin = slice->begin;
-    str->text.end = slice->end;
-    str->tail = slice->end;
-    str->owner = NULL;
-    str->writable = false;
+    cow->slice = *slice;
+    cow->kind = JSON_COW_CONST_BORROWED_SLICE;
 }
 
-json_error_code json_string_into_owned_c_str(const json_allocator *allocator, json_string *str, char **out)
+void json_cow_str_borrow_mut(char *ptr, size_t len, size_t cap, json_cow_str *cow)
+{
+    cow->string = (json_string){ptr, len, cap};
+    cow->kind = JSON_COW_MUT_BORROWED_STRING;
+}
+
+json_error_code json_cow_str_into_owned_c_str(const json_allocator *allocator, json_cow_str *cow, char **out)
 {
     *out = NULL;
-    if (str->owner && str->writable && ((const char *)str->owner) == str->text.begin &&
-        json_string_has_room_for_nul(str)) {
-        // 对于可以移动的值，直接移动为 C nul terminated str
-        char *ret = (char *)str->text.begin;
-        *(char *)str->text.end = '\0'; // 添加一个0结尾
-        *str = (json_string){0};
-        *out = ret;
+    json_slice slice = json_cow_str_as_slice(cow);
+    if (cow->kind == JSON_COW_OWNED_STRING && cow->string.cap > cow->string.len) {
+        cow->string.ptr[cow->string.len] = '\0';
+        *out = cow->string.ptr;
+        *cow = (json_cow_str){0};
         return JSON_ERROR_NONE;
     }
-    // 对于无法移动的值，申请内存，并尝试释放原内存，以满足移动语义。
-    size_t str_len = json_slice_len(&str->text);
-    size_t buf_len = str_len + 1; // '\0' 结尾
-    char *buf = allocator->malloc(buf_len);
-    if (!buf) {
+    if (slice.len == SIZE_MAX) {
+        return JSON_ERROR_RANGE_BUFFER_TOO_SMALL;
+    }
+    char *ptr = allocator->malloc(slice.len + 1);
+    if (ptr == NULL) {
         return JSON_ERROR_OTHER_NO_MEMORY;
     }
-    memcpy(buf, str->text.begin, str_len);
-    buf[buf_len - 1] = '\0';
-    if (str->owner) {
-        allocator->free(str->owner);
+    if (slice.len != 0) {
+        memcpy(ptr, slice.ptr, slice.len);
     }
-    *str = (json_string){0};
-    *out = buf;
+    ptr[slice.len] = '\0';
+    json_free_cow_str(allocator, cow);
+    *out = ptr;
     return JSON_ERROR_NONE;
 }
 
@@ -184,204 +142,161 @@ static int hex_value(char c)
     return -1;
 }
 
-static json_error_code json_calc_hex_unicode_escape(const char **ptr, const char *end, const char **error_pos,
-                                                    uint32_t *out)
+static json_error_code parse_hex_quad(const char **cursor, const char *end, const char **error_pos,
+                                      uint32_t *out)
 {
-    if (end - *ptr < 4) {
+    if ((size_t)(end - *cursor) < 4) {
         *error_pos = end;
         return JSON_ERROR_ESCAPE_INVALID_UNICODE;
     }
-
     uint32_t value = 0;
-    const char *p = *ptr;
-
-    for (size_t i = 0; i < 4; i++) {
-        int v = hex_value(*p++);
-        if (v < 0) {
-            *error_pos = p - 1;
+    const char *ptr = *cursor;
+    for (size_t index = 0; index < 4; ++index) {
+        int digit = hex_value(*ptr++);
+        if (digit < 0) {
+            *error_pos = ptr - 1;
             return JSON_ERROR_ESCAPE_INVALID_UNICODE;
         }
-        value = (value << 4) | (uint32_t)v;
+        value = (value << 4) | (uint32_t)digit;
     }
-
-    *ptr = p;
+    *cursor = ptr;
     *out = value;
     return JSON_ERROR_NONE;
 }
 
-static json_error_code json_write_utf8(uint32_t value, json_string *to)
+static json_error_code append_utf8(uint32_t value, json_string *to)
 {
-    if (value >= 0xD800 && value <= 0xDFFF) {
-        return JSON_ERROR_ESCAPE_INVALID_UNICODE;
-    }
-    size_t remain = json_owned_string_remaind_cap(to);
-
     size_t need;
-
-    if (value <= 0x7F) {
+    if (value <= 0x7f) {
         need = 1;
-    } else if (value <= 0x7FF) {
+    } else if (value <= 0x7ff) {
         need = 2;
-    } else if (value <= 0xFFFF) {
+    } else if (value <= 0xffff && !(value >= 0xd800 && value <= 0xdfff)) {
         need = 3;
-    } else if (value <= 0x10FFFF) {
+    } else if (value <= 0x10ffff) {
         need = 4;
     } else {
         return JSON_ERROR_ESCAPE_INVALID_UNICODE;
     }
-
-    if (remain < need + 1) { // 保留nul
+    if (to->cap - to->len <= need) {
         return JSON_ERROR_RANGE_BUFFER_TOO_SMALL;
     }
-
-    char *dst = (char *)to->text.end;
-
+    unsigned char *dst = (unsigned char *)to->ptr + to->len;
     if (need == 1) {
-        *dst++ = (char)value;
+        dst[0] = (unsigned char)value;
     } else if (need == 2) {
-        *dst++ = (char)(0xC0 | (value >> 6));
-        *dst++ = (char)(0x80 | (value & 0x3F));
+        dst[0] = (unsigned char)(0xc0 | (value >> 6));
+        dst[1] = (unsigned char)(0x80 | (value & 0x3f));
     } else if (need == 3) {
-        *dst++ = (char)(0xE0 | (value >> 12));
-        *dst++ = (char)(0x80 | ((value >> 6) & 0x3F));
-        *dst++ = (char)(0x80 | (value & 0x3F));
+        dst[0] = (unsigned char)(0xe0 | (value >> 12));
+        dst[1] = (unsigned char)(0x80 | ((value >> 6) & 0x3f));
+        dst[2] = (unsigned char)(0x80 | (value & 0x3f));
     } else {
-        *dst++ = (char)(0xF0 | (value >> 18));
-        *dst++ = (char)(0x80 | ((value >> 12) & 0x3F));
-        *dst++ = (char)(0x80 | ((value >> 6) & 0x3F));
-        *dst++ = (char)(0x80 | (value & 0x3F));
+        dst[0] = (unsigned char)(0xf0 | (value >> 18));
+        dst[1] = (unsigned char)(0x80 | ((value >> 12) & 0x3f));
+        dst[2] = (unsigned char)(0x80 | ((value >> 6) & 0x3f));
+        dst[3] = (unsigned char)(0x80 | (value & 0x3f));
     }
-
-    to->text.end = dst;
+    to->len += need;
     return JSON_ERROR_NONE;
 }
 
-static json_error_code json_proc_hex_unicode_escape(const char **ptr, const char *end, json_string *to,
-                                                    const char **error_pos)
+static json_error_code append_unicode_escape(const char **cursor, const char *end, const char **error_pos,
+                                             json_string *to)
 {
-    const char *p = *ptr;
     uint32_t value = 0;
-    json_error_code code = json_calc_hex_unicode_escape(&p, end, error_pos, &value);
+    json_error_code code = parse_hex_quad(cursor, end, error_pos, &value);
     if (code != JSON_ERROR_NONE) {
         return code;
     }
-    // high surrogate
-    if (value >= 0xD800 && value <= 0xDBFF) {
-        const char *next = p;
-        if (end - next >= 6 && next[0] == '\\' && next[1] == 'u') {
-            next += 2;
-            uint32_t low = 0;
-            const char *low_error = NULL;
-            code = json_calc_hex_unicode_escape(&next, end, &low_error, &low);
-            if (code != JSON_ERROR_NONE || low < 0xDC00 || low > 0xDFFF) {
-                *error_pos = code == JSON_ERROR_NONE ? next - 4 : low_error;
-                return JSON_ERROR_ESCAPE_INVALID_UNICODE;
-            }
-            value = 0x10000 + ((value - 0xD800) << 10) + (low - 0xDC00);
-            p = next;
-        } else {
-            *error_pos = p;
+    if (value >= 0xd800 && value <= 0xdbff) {
+        const char *next = *cursor;
+        if ((size_t)(end - next) < 6 || next[0] != '\\' || next[1] != 'u') {
+            *error_pos = next;
             return JSON_ERROR_ESCAPE_INVALID_UNICODE;
         }
-    }
-    // 单独low surrogate非法，不过json允许悬空surrogate……什么道理
-    if (value >= 0xDC00 && value <= 0xDFFF) {
-        *error_pos = p - 4;
+        next += 2;
+        uint32_t low = 0;
+        code = parse_hex_quad(&next, end, error_pos, &low);
+        if (code != JSON_ERROR_NONE || low < 0xdc00 || low > 0xdfff) {
+            if (code == JSON_ERROR_NONE) {
+                *error_pos = next - 4;
+            }
+            return JSON_ERROR_ESCAPE_INVALID_UNICODE;
+        }
+        value = 0x10000 + ((value - 0xd800) << 10) + (low - 0xdc00);
+        *cursor = next;
+    } else if (value >= 0xdc00 && value <= 0xdfff) {
+        *error_pos = *cursor - 4;
         return JSON_ERROR_ESCAPE_INVALID_UNICODE;
     }
-    code = json_write_utf8(value, to);
-    if (code != JSON_ERROR_NONE) {
-        *error_pos = p;
-        return code;
-    }
-
-    *ptr = p;
-    return JSON_ERROR_NONE;
+    return append_utf8(value, to);
 }
 
-json_error_code json_str_unescape(const json_allocator *allocator, const json_str_slice *from, json_string *to,
+json_error_code json_str_unescape(const json_allocator *allocator, const json_slice *from, json_string *to,
                                   size_t *error_offset)
 {
-    size_t from_len = json_slice_len(from);
     if (error_offset != NULL) {
         *error_offset = 0;
     }
-    json_string_reset(to); // 清空字符串，避免原始内容残留
-    json_error_code code = json_string_ensure_cap(allocator, to, from_len + 1);
-    if (code != JSON_ERROR_NONE) {
-        // 保证有一个0结尾
-        json_free_string(allocator, to);
-        return code;
+    json_free_string(allocator, to);
+    if (from->len == SIZE_MAX) {
+        return JSON_ERROR_RANGE_BUFFER_TOO_SMALL;
     }
-    char *dst = (char *)to->text.end;
-    const char *write_tail = to->tail - 1;
-    const char *p = from->begin;
-    while (p < from->end) {
-        if (dst >= write_tail) {
-            code = JSON_ERROR_RANGE_BUFFER_TOO_SMALL;
-            goto fail;
-        }
-        char c = *p++;
-        if (c != '\\') {
-            *dst++ = c;
-            to->text.end = dst;
+    to->cap = from->len + 1;
+    to->ptr = allocator->malloc(to->cap);
+    if (to->ptr == NULL) {
+        *to = (json_string){0};
+        return JSON_ERROR_OTHER_NO_MEMORY;
+    }
+    to->len = 0;
+    const char *cursor = from->ptr;
+    const char *end = from->ptr + from->len;
+    json_error_code code = JSON_ERROR_NONE;
+    while (cursor < end) {
+        char value = *cursor++;
+        if (value != '\\') {
+            to->ptr[to->len++] = value;
             continue;
         }
-        if (p >= from->end) {
-            if (error_offset != NULL) {
-                *error_offset = (size_t)(p - 1 - from->begin);
-            }
+        if (cursor >= end) {
             code = JSON_ERROR_ESCAPE_INVALID_SEQUENCE;
+            if (error_offset != NULL) {
+                *error_offset = (size_t)(cursor - 1 - from->ptr);
+            }
             goto fail;
         }
-        c = *p++;
-        switch (c) {
-            case '"':
-                *dst++ = '"';
-                break;
-            case '\\':
-                *dst++ = '\\';
-                break;
-            case '/':
-                *dst++ = '/';
-                break;
-            case 'b':
-                *dst++ = '\b';
-                break;
-            case 'f':
-                *dst++ = '\f';
-                break;
-            case 'n':
-                *dst++ = '\n';
-                break;
-            case 'r':
-                *dst++ = '\r';
-                break;
-            case 't':
-                *dst++ = '\t';
-                break;
+        value = *cursor++;
+        switch (value) {
+            case '"': value = '"'; break;
+            case '\\': value = '\\'; break;
+            case '/': value = '/'; break;
+            case 'b': value = '\b'; break;
+            case 'f': value = '\f'; break;
+            case 'n': value = '\n'; break;
+            case 'r': value = '\r'; break;
+            case 't': value = '\t'; break;
             case 'u': {
                 const char *error_pos = NULL;
-                code = json_proc_hex_unicode_escape(&p, from->end, to, &error_pos);
+                code = append_unicode_escape(&cursor, end, &error_pos, to);
                 if (code != JSON_ERROR_NONE) {
                     if (error_offset != NULL) {
-                        *error_offset = (size_t)(error_pos - from->begin);
+                        *error_offset = (size_t)(error_pos - from->ptr);
                     }
                     goto fail;
                 }
-                dst = (char *)to->text.end;
-                break;
+                continue;
             }
             default:
-                if (error_offset != NULL) {
-                    *error_offset = (size_t)(p - 1 - from->begin);
-                }
                 code = JSON_ERROR_ESCAPE_INVALID_SEQUENCE;
+                if (error_offset != NULL) {
+                    *error_offset = (size_t)(cursor - 1 - from->ptr);
+                }
                 goto fail;
         }
-        to->text.end = dst;
+        to->ptr[to->len++] = value;
     }
-    *(char *)to->text.end = '\0';
+    to->ptr[to->len] = '\0';
     return JSON_ERROR_NONE;
 
 fail:

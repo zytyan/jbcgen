@@ -78,6 +78,8 @@ class CGeneratorTest(unittest.TestCase):
             self.assertEqual(process.returncode, 0, process.stderr + "\n" + source)
             self.assertIn("jbc_decode_Root", source)
             self.assertIn("jbc_release_Root", source)
+            self.assertIn("json_key_dispatch(&key_map", source)
+            self.assertIn('{{"identifier", 10}, 0}', source)
             self.assertIn("JSON_ERROR_OTHER_MISSING_REQUIRED_KEY", source)
             pointer_check = source.index("JSON_TOKEN_LBRACE", source.index("out->optional"))
             pointer_allocation = source.index("parser->allocator->malloc", pointer_check)
