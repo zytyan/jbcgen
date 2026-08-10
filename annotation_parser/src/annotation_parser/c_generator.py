@@ -1,31 +1,14 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 
-from .plan_ir import (
-    DecodeArrayPlan,
-    DecodeFieldPlan,
-    DecodeObjectPlan,
-    DecodeOperation,
-    DecodePlan,
-    ReleaseFieldPlan,
-    ReleaseArrayPlan,
-    ReleaseOperation,
-    ReleasePlan,
-)
-from .schema_core import CoreFieldSchema, CoreRecordSchema
-from .schema_ir import RecordShape, SchemaIR, TypeKind
-from .schema_plugins import VALUE_TYPES_KEY
+from .generate_plan import FieldPlan, GeneratePlan
+from .schema import FieldSchema, RecordSchema, RecordShape, Schema, TypeKind
 
 
 def _c_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=True)
-
-
-def _identifier(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_]", "_", value)
 
 
 @dataclass(frozen=True)
@@ -37,18 +20,13 @@ class _Constraint:
 
 
 class CGenerator:
-    def __init__(self, schema: SchemaIR, decode_plan: DecodePlan, release_plan: ReleasePlan):
+    def __init__(self, schema: Schema, plan: GeneratePlan):
         self.schema = schema
-        self.decode_plan = decode_plan
-        self.release_plan = release_plan
-        value_types = schema.plugins.require(VALUE_TYPES_KEY)
-        self.types = value_types.types
-        self.records = schema.core.record_map()
-        self.record_shapes = value_types.records
-        self.decode_objects = {item.record_id: item for item in decode_plan.objects}
-        self.decode_arrays = {item.record_id: item for item in decode_plan.arrays}
-        self.release_objects = {item.record_id: item for item in release_plan.objects}
-        self.release_arrays = {item.record_id: item for item in release_plan.arrays}
+        self.plan = plan
+        self.types = schema.type_map()
+        self.records = schema.record_map()
+        self.fields = schema.field_map()
+        self.type_plans = plan.type_map()
 
     def generate(self, include: str) -> str:
         self._validate_entrypoints()
@@ -67,43 +45,49 @@ class CGenerator:
         ]
         lines.extend(self._error_helpers())
         lines.append("")
-        for record in self.schema.core.records:
+        for record in self.schema.records:
             lines.append(self._release_prototype(record) + ";")
             lines.append(self._decode_prototype(record) + ";")
         lines.append("")
-        for record in self.schema.core.records:
+        for record in self.schema.records:
             lines.extend(self._generate_release(record))
             lines.append("")
-        for record in self.schema.core.records:
+        for record in self.schema.records:
             lines.extend(self._generate_decode(record))
             lines.append("")
         lines.extend(self._generate_public_functions())
         return "\n".join(lines).rstrip() + "\n"
 
-    def _helper_suffix(self, record_id: str) -> str:
-        return _identifier(record_id.removeprefix("record:"))
-
     def _release_name(self, record_id: str) -> str:
-        return f"jbc_release_{self._helper_suffix(record_id)}"
+        return self.type_plans[record_id].release_helper
 
     def _decode_name(self, record_id: str) -> str:
-        return f"jbc_decode_{self._helper_suffix(record_id)}"
+        return self.type_plans[record_id].decode_helper
 
-    def _release_prototype(self, record: CoreRecordSchema) -> str:
+    def _release_prototype(self, record: RecordSchema) -> str:
         return f"static void {self._release_name(record.id)}(json_allocator *allocator, {record.c_type} *out)"
 
-    def _decode_prototype(self, record: CoreRecordSchema) -> str:
+    def _decode_prototype(self, record: RecordSchema) -> str:
         return f"static bool {self._decode_name(record.id)}(json_parser *parser, {record.c_type} *out)"
 
     def _validate_entrypoints(self) -> None:
-        # Entrypoint signatures and target roles are validated by the Entrypoints
-        # plugin before plans or generated C can be constructed.
+        # Entrypoint signatures and target roles are validated while Schema is built.
         return
 
     def _error_helpers(self) -> list[str]:
-        fields = [field for obj in self.decode_plan.objects for field in obj.fields]
-        used_types = {field.value.type_id for field in fields}
-        used_types.update(array.element.type_id for array in self.decode_plan.arrays)
+        fields = [field for item in self.plan.types for field in item.fields]
+        schema_fields = [self.fields[field.field_id] for field in fields]
+        array_records = [
+            self.records[item.record_id]
+            for item in self.plan.types
+            if item.shape is RecordShape.ARRAY
+        ]
+        used_types = {field.type_id for field in schema_fields}
+        used_types.update(
+            record.array.element_type_id
+            for record in array_records
+            if record.array is not None
+        )
         pending = list(used_types)
         while pending:
             item = self.types[pending.pop()]
@@ -112,27 +96,43 @@ class CGenerator:
                 pending.append(item.target)
         needs_context = bool(fields)
         needs_length = any(
-            self._counter_limit(array.length_type_id) is not None
-            or self._counter_limit(array.capacity_type_id) is not None
-            for array in self.decode_plan.arrays
+            self._counter_limit(
+                self.fields[record.array.length_field_id].type_id
+                if record.array and record.array.length_field_id
+                else None
+            )
+            is not None
+            or self._counter_limit(
+                self.fields[record.array.capacity_field_id].type_id
+                if record.array and record.array.capacity_field_id
+                else None
+            )
+            is not None
+            for record in array_records
         ) or any(
             field.min_length is not None
             or field.max_length is not None
-            or self._counter_limit(field.length_type_id) is not None
-            or self.types[field.value.type_id].kind is TypeKind.FIXED_ARRAY
-            or (
-                self.types[field.value.type_id].kind is TypeKind.STRING
-                and self.types[field.value.type_id].capacity is not None
+            or self._counter_limit(
+                self.fields[field.length_field_id].type_id
+                if field.length_field_id
+                else None
             )
-            for field in fields
+            is not None
+            or self.types[field.type_id].kind is TypeKind.FIXED_ARRAY
+            or (
+                self.types[field.type_id].kind is TypeKind.STRING
+                and self.types[field.type_id].capacity is not None
+            )
+            for field in schema_fields
         )
         needs_number = any(
-            field.minimum is not None or field.maximum is not None for field in fields
+            field.minimum is not None or field.maximum is not None
+            for field in schema_fields
         ) or any(
             self.types[type_id].kind is TypeKind.FLOAT and self.types[type_id].bits == 32
             for type_id in used_types
         )
-        needs_memory = bool(self.decode_plan.arrays) or any(
+        needs_memory = bool(array_records) or any(
             self.types[type_id].kind in {TypeKind.POINTER, TypeKind.DYNAMIC_ARRAY}
             or (
                 self.types[type_id].kind is TypeKind.STRING
@@ -194,9 +194,9 @@ class CGenerator:
     def _field_expression(self, path: tuple[str, ...], base: str = "out") -> str:
         return base + "->" + ".".join(path)
 
-    def _field_schema(self, record: CoreRecordSchema, path: tuple[str, ...]) -> CoreFieldSchema:
+    def _field_schema(self, record: RecordSchema, path: tuple[str, ...]) -> FieldSchema:
         current = record
-        result: CoreFieldSchema | None = None
+        result: FieldSchema | None = None
         for index, name in enumerate(path):
             result = next(field for field in current.fields if field.name == name)
             if index + 1 < len(path):
@@ -204,24 +204,27 @@ class CGenerator:
         assert result is not None
         return result
 
-    def _generate_release(self, record: CoreRecordSchema) -> list[str]:
-        if self.record_shapes[record.id] is RecordShape.ARRAY:
-            return self._generate_array_release(record, self.release_arrays[record.id])
-        plan = self.release_objects[record.id]
+    def _generate_release(self, record: RecordSchema) -> list[str]:
+        plan = self.type_plans[record.id]
+        if record.shape is RecordShape.ARRAY:
+            return self._generate_array_release(record)
         lines = [self._release_prototype(record), "{", "    if (out == NULL) {", "        return;", "    }"]
-        for index, field in enumerate(plan.fields):
-            expression = self._field_expression(field.path)
-            length = self._field_expression(field.length_path) if field.length_path else None
+        for index, field_id in enumerate(plan.owned_field_ids):
+            field = self.fields[field_id]
+            expression = self._field_expression((field.name,))
+            length_field = self.fields[field.length_field_id] if field.length_field_id else None
+            length = self._field_expression((length_field.name,)) if length_field else None
             lines.extend(self._emit_release_value(field.type_id, expression, length, 1, f"r{index}"))
         lines.append("    memset(out, 0, sizeof(*out));")
         lines.append("}")
         return lines
 
-    def _generate_array_release(
-        self, record: CoreRecordSchema, plan: ReleaseArrayPlan
-    ) -> list[str]:
-        elems = self._field_expression(plan.elems_path)
-        count_path = plan.length_path or plan.capacity_path
+    def _generate_array_release(self, record: RecordSchema) -> list[str]:
+        layout = record.array
+        assert layout is not None
+        elems_field = self.fields[layout.elems_field_id]
+        count_field_id = layout.length_field_id or layout.capacity_field_id
+        elems = self._field_expression((elems_field.name,))
         lines = [
             self._release_prototype(record),
             "{",
@@ -229,16 +232,16 @@ class CGenerator:
             "        return;",
             "    }",
         ]
-        if plan.release_elements:
-            assert count_path is not None
-            count = self._field_expression(count_path)
+        if self.types[layout.element_type_id].owns_resources:
+            assert count_field_id is not None
+            count = self._field_expression((self.fields[count_field_id].name,))
             lines.extend([
                 f"    if ({elems} != NULL) {{",
                 f"        for (size_t r0 = 0; r0 < (size_t)({count}); ++r0) {{",
             ])
             lines.extend(
                 self._emit_release_value(
-                    plan.element_type_id, f"({elems})[r0]", None, 3, "r0e"
+                    layout.element_type_id, f"({elems})[r0]", None, 3, "r0e"
                 )
             )
             lines.append("        }")
@@ -305,15 +308,12 @@ class CGenerator:
                 lines.append(f"{pad}{length_expression} = 0;")
         return lines
 
-    def _generate_decode(self, record: CoreRecordSchema) -> list[str]:
-        if self.record_shapes[record.id] is RecordShape.ARRAY:
-            return self._generate_array_decode(record, self.decode_arrays[record.id])
-        plan = self.decode_objects[record.id]
+    def _generate_decode(self, record: RecordSchema) -> list[str]:
+        plan = self.type_plans[record.id]
+        if record.shape is RecordShape.ARRAY:
+            return self._generate_array_decode(record)
         count = max(1, len(plan.fields))
-        key_entries = sorted(
-            ((key, field.seen_index) for field in plan.fields for key in field.keys),
-            key=lambda entry: (len(entry[0].encode("utf-8")), entry[0].encode("utf-8")),
-        )
+        key_entries = plan.key_entries
         lines = [
             self._decode_prototype(record),
             "{",
@@ -322,8 +322,8 @@ class CGenerator:
             lines.extend([
                 "    static const json_key_entry key_entries[] = {",
                 *[
-                    f"        {{{{{_c_string(key)}, {len(key.encode('utf-8'))}}}, {field_id}}},"
-                    for key, field_id in key_entries
+                    f"        {{{{{_c_string(entry.key)}, {len(entry.key.encode('utf-8'))}}}, {entry.field_index}}},"
+                    for entry in key_entries
                 ],
                 "    };",
                 "    static const json_key_map key_map = {key_entries, sizeof(key_entries) / sizeof(key_entries[0])};",
@@ -385,10 +385,11 @@ class CGenerator:
             "object_done:",
         ])
         for field in plan.fields:
-            if field.required:
+            schema_field = self.fields[field.field_id]
+            if schema_field.required:
                 lines.extend([
                     f"    if (!seen[{field.seen_index}]) {{",
-                    f"        jbc_set_context_error(parser, JSON_ERROR_OTHER_MISSING_REQUIRED_KEY, {_c_string(field.keys[0])}, object_end_location);",
+                    f"        jbc_set_context_error(parser, JSON_ERROR_OTHER_MISSING_REQUIRED_KEY, {_c_string(schema_field.key)}, object_end_location);",
                     "        goto fail;",
                     "    }",
                 ])
@@ -429,13 +430,18 @@ class CGenerator:
             f"{pad}}}",
         ]
 
-    def _generate_array_decode(
-        self, record: CoreRecordSchema, plan: DecodeArrayPlan
-    ) -> list[str]:
-        target = self.types[plan.element.type_id]
-        elems = self._field_expression(plan.elems_path)
-        length = self._field_expression(plan.length_path) if plan.length_path else None
-        capacity = self._field_expression(plan.capacity_path) if plan.capacity_path else None
+    def _generate_array_decode(self, record: RecordSchema) -> list[str]:
+        layout = record.array
+        assert layout is not None
+        target = self.types[layout.element_type_id]
+        elems_field = self.fields[layout.elems_field_id]
+        length_field = self.fields[layout.length_field_id] if layout.length_field_id else None
+        capacity_field = self.fields[layout.capacity_field_id] if layout.capacity_field_id else None
+        elems = self._field_expression((elems_field.name,))
+        length = self._field_expression((length_field.name,)) if length_field else None
+        capacity = self._field_expression((capacity_field.name,)) if capacity_field else None
+        length_type_id = length_field.type_id if length_field else None
+        capacity_type_id = capacity_field.type_id if capacity_field else None
         lines = [
             self._decode_prototype(record),
             "{",
@@ -443,7 +449,7 @@ class CGenerator:
             "    size_t array_count = 0;",
             f"    {elems} = NULL;",
         ]
-        if self._counter_limit(plan.capacity_type_id) is not None:
+        if self._counter_limit(capacity_type_id) is not None:
             lines.insert(4, "    json_source_location array_location = json_peek_token(parser)->location;")
         if length is not None:
             lines.append(f"    {length} = 0;")
@@ -457,7 +463,7 @@ class CGenerator:
             "        while (true) {",
         ])
         # Reject before decoding the first element that cannot be represented by len.
-        limit = self._counter_limit(plan.length_type_id)
+        limit = self._counter_limit(length_type_id)
         if limit is not None:
             lines.extend([
                 f"            if (array_count >= (size_t){limit}) {{",
@@ -476,7 +482,7 @@ class CGenerator:
         ])
         lines.extend(
             self._emit_decode_value(
-                plan.element.type_id,
+                layout.element_type_id,
                 "*array_element",
                 None,
                 _Constraint(),
@@ -500,15 +506,17 @@ class CGenerator:
             )
             lines.extend(
                 self._emit_counter_check(
-                    "array_capacity", plan.capacity_type_id, "array_location", "array_fail", 1
+                    "array_capacity", capacity_type_id, "array_location", "array_fail", 1
                 )
             )
         lines.append(f"    {elems} = ({target.c_type} *)array_vec.data;")
         if length is not None:
-            field_type = self._field_schema(record, plan.length_path).c_type
+            assert length_field is not None
+            field_type = length_field.c_type
             lines.append(f"    {length} = ({field_type})array_count;")
         if capacity is not None:
-            field_type = self._field_schema(record, plan.capacity_path).c_type
+            assert capacity_field is not None
+            field_type = capacity_field.c_type
             lines.append(f"    {capacity} = ({field_type})array_capacity;")
         lines.extend([
             "    array_vec.data = NULL;",
@@ -518,7 +526,7 @@ class CGenerator:
         ])
         lines.extend(
             self._emit_release_value(
-                plan.element.type_id,
+                layout.element_type_id,
                 f"(({target.c_type} *)array_vec.data)[array_cleanup]",
                 None,
                 2,
@@ -536,36 +544,44 @@ class CGenerator:
         ])
         return lines
 
-    def _generate_field_case(self, record: CoreRecordSchema, field: DecodeFieldPlan) -> list[str]:
+    def _generate_field_case(self, record: RecordSchema, field: FieldPlan) -> list[str]:
+        schema_field = self.fields[field.field_id]
         index = field.seen_index
         expression = self._field_expression(field.path)
         length = self._field_expression(field.length_path) if field.length_path else None
-        constraint = _Constraint(field.minimum, field.maximum, field.min_length, field.max_length)
+        constraint = _Constraint(
+            schema_field.minimum,
+            schema_field.maximum,
+            schema_field.min_length,
+            schema_field.max_length,
+        )
         lines = [f"        case {index}: {{"]
         lines.extend([
             f"            if (seen[{index}]) {{",
-            f"                jbc_set_context_error(parser, JSON_ERROR_OTHER_DUPLICATE_KEY, {_c_string(field.keys[0])}, key_location);",
+            f"                jbc_set_context_error(parser, JSON_ERROR_OTHER_DUPLICATE_KEY, {_c_string(schema_field.key)}, key_location);",
             "                goto fail;",
             "            }",
             f"            seen[{index}] = 1;",
         ])
-        if field.required:
+        if schema_field.required:
             lines.extend([
                 "            if (json_peek_token(parser)->kind == JSON_TOKEN_NULL) {",
-                f"                jbc_set_context_error(parser, JSON_ERROR_OTHER_NULL_REQUIRED_VALUE, {_c_string(field.keys[0])}, json_peek_token(parser)->location);",
+                f"                jbc_set_context_error(parser, JSON_ERROR_OTHER_NULL_REQUIRED_VALUE, {_c_string(schema_field.key)}, json_peek_token(parser)->location);",
                 "                goto fail;",
                 "            }",
             ])
         lines.extend(
             self._emit_decode_value(
-                field.value.type_id,
+                schema_field.type_id,
                 expression,
                 length,
                 constraint,
                 "fail",
                 3,
                 f"f{index}",
-                field.length_type_id,
+                self._field_schema(record, field.length_path).type_id
+                if field.length_path
+                else None,
             )
         )
         lines.extend(["            break;", "        }"])
@@ -756,12 +772,12 @@ class CGenerator:
             target_record = self.records[target.id]
             token = (
                 "JSON_TOKEN_LBRACKET"
-                if self.record_shapes[target_record.id] is RecordShape.ARRAY
+                if target_record.shape is RecordShape.ARRAY
                 else "JSON_TOKEN_LBRACE"
             )
             expected = (
                 "JSON_EXPECTED_ARRAY"
-                if self.record_shapes[target_record.id] is RecordShape.ARRAY
+                if target_record.shape is RecordShape.ARRAY
                 else "JSON_EXPECTED_OBJECT"
             )
             lines.extend([
@@ -984,10 +1000,9 @@ class CGenerator:
 
     def _generate_public_functions(self) -> list[str]:
         lines: list[str] = []
-        functions = {item.name: item for item in self.schema.core.functions}
-        for entry in self.decode_plan.entries:
-            function = functions[entry.function_name]
-            assert entry.record_id is not None
+        for function in self.schema.functions:
+            if function.role != "jsonDecode":
+                continue
             output_type = function.parameter_c_types[1].strip()
             lines.extend([
                 f"bool {function.name}(json_parser *parser, {output_type} out)",
@@ -997,24 +1012,24 @@ class CGenerator:
                 "        return false;",
                 "    }",
                 "    memset(out, 0, sizeof(*out));",
-                f"    return {self._decode_name(entry.record_id)}(parser, out);",
+                f"    return {self._decode_name(function.record_id)}(parser, out);",
                 "}",
                 "",
             ])
-        for entry in self.release_plan.entries:
-            function = functions[entry.function_name]
-            assert entry.record_id is not None
+        for function in self.schema.functions:
+            if function.role != "jsonCleanup":
+                continue
             output_type = function.parameter_c_types[1].strip()
             lines.extend([
                 f"void {function.name}(json_allocator *allocator, {output_type} out)",
                 "{",
                 "    if (allocator == NULL || out == NULL) return;",
-                f"    {self._release_name(entry.record_id)}(allocator, out);",
+                f"    {self._release_name(function.record_id)}(allocator, out);",
                 "}",
                 "",
             ])
         return lines
 
 
-def generate_c(schema: SchemaIR, decode_plan: DecodePlan, release_plan: ReleasePlan, include: str) -> str:
-    return CGenerator(schema, decode_plan, release_plan).generate(include)
+def generate_c(schema: Schema, plan: GeneratePlan, include: str) -> str:
+    return CGenerator(schema, plan).generate(include)

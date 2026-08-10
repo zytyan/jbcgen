@@ -10,8 +10,8 @@ from typing import Sequence, TextIO
 from .c_generator import generate_c
 from .clang_frontend import ClangFrontend
 from .diagnostics import AnnotationError, FrontendError
-from .plan_ir import build_decode_plan, build_release_plan, format_decode_plan, format_release_plan
-from .schema_ir import build_schema_ir, format_schema_ir
+from .generate_plan import build_generate_plan, format_generate_plan
+from .schema import build_schema, format_schema
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -25,7 +25,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--include", dest="include", help="header spelling emitted in generated C")
     parser.add_argument(
         "--dump-ir",
-        choices=("schema", "decode", "release", "all"),
+        choices=("schema", "plan", "all"),
         help="print a human-readable IR dump to stderr",
     )
     return parser
@@ -59,16 +59,13 @@ def run(argv: Sequence[str] | None = None, stderr: TextIO | None = None) -> int:
     options = _parser().parse_args(tool_arguments)
     try:
         unit = ClangFrontend(options.clang).parse(options.input, clang_arguments)
-        schema = build_schema_ir(unit)
-        decode = build_decode_plan(schema)
-        release = build_release_plan(schema)
-        source = generate_c(schema, decode, release, options.include or str(options.input))
+        schema = build_schema(unit)
+        plan = build_generate_plan(schema)
+        source = generate_c(schema, plan, options.include or str(options.input))
         if options.dump_ir in {"schema", "all"}:
-            print(format_schema_ir(schema), file=stderr)
-        if options.dump_ir in {"decode", "all"}:
-            print(format_decode_plan(decode), file=stderr)
-        if options.dump_ir in {"release", "all"}:
-            print(format_release_plan(release), file=stderr)
+            print(format_schema(schema), file=stderr)
+        if options.dump_ir in {"plan", "all"}:
+            print(format_generate_plan(plan, schema), file=stderr)
         _atomic_write(options.output, source)
         return 0
     except (AnnotationError, FrontendError, OSError) as error:

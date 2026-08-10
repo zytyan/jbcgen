@@ -10,13 +10,7 @@ from annotation_parser.clang_frontend import (
     parse_type_spelling,
 )
 from annotation_parser.diagnostics import AnnotationError, SourceLocation
-from annotation_parser.schema_ir import RecordShape, TypeKind, build_schema_ir, format_schema_ir
-from annotation_parser.schema_plugins import (
-    ARRAY_LAYOUT_KEY,
-    BINDING_KEY,
-    OWNERSHIP_KEY,
-    VALUE_TYPES_KEY,
-)
+from annotation_parser.schema import RecordShape, TypeKind, build_schema, format_schema
 
 
 LOCATION = SourceLocation("input.h", 1, 1)
@@ -40,7 +34,7 @@ def unit(records: tuple[AstRecord, ...]) -> TranslationUnit:
     return TranslationUnit(__import__("pathlib").Path("input.h"), records, (), (), ())
 
 
-class SchemaIrTest(unittest.TestCase):
+class SchemaTest(unittest.TestCase):
     def test_consumes_structured_frontend_type_without_parsing_c_spelling(self) -> None:
         structured = AstType(AstTypeKind.INTEGER, "opaque_counter_alias", 16, False)
         root = AstRecord(
@@ -50,8 +44,8 @@ class SchemaIrTest(unittest.TestCase):
             parse_annotations("@jsonStruct", LOCATION),
             LOCATION,
         )
-        schema = build_schema_ir(unit((root,)))
-        value = schema.core.record_map()["record:Root"].fields[0]
+        schema = build_schema(unit((root,)))
+        value = schema.record_map()["record:Root"].fields[0]
         self.assertEqual(value.type_id, "integer:u16")
         self.assertEqual(value.c_type, "opaque_counter_alias")
 
@@ -73,17 +67,16 @@ class SchemaIrTest(unittest.TestCase):
             parse_annotations("@jsonStruct", LOCATION),
             LOCATION,
         )
-        schema = build_schema_ir(unit((city, user)))
-        records = schema.core.record_map()
+        schema = build_schema(unit((city, user)))
+        records = schema.record_map()
         self.assertEqual(set(records), {"record:City", "record:User"})
         cities = records["record:User"].fields[0]
         count = records["record:User"].fields[1]
-        values = schema.plugins.require(VALUE_TYPES_KEY)
-        self.assertEqual(values.types[values.fields[cities.id]].kind, TypeKind.DYNAMIC_ARRAY)
-        self.assertTrue(schema.plugins.require(BINDING_KEY).fields[cities.id].required)
-        self.assertIn(count.id, schema.plugins.require(ARRAY_LAYOUT_KEY).metadata_field_ids())
-        self.assertTrue(schema.plugins.require(OWNERSHIP_KEY).records["record:User"])
-        rendered = format_schema_ir(schema)
+        self.assertEqual(schema.type_map()[cities.type_id].kind, TypeKind.DYNAMIC_ARRAY)
+        self.assertTrue(cities.required)
+        self.assertIn(count.id, schema.metadata_field_ids())
+        self.assertTrue(records["record:User"].owns_resources)
+        rendered = format_schema(schema)
         self.assertIn("record record:User", rendered)
         self.assertIn("required", rendered)
 
@@ -97,7 +90,7 @@ class SchemaIrTest(unittest.TestCase):
             LOCATION,
         )
         with self.assertRaisesRegex(AnnotationError, "required cannot be combined with flatten"):
-            build_schema_ir(unit((nested, root)))
+            build_schema(unit((nested, root)))
 
     def test_rejects_flatten_key_collision(self) -> None:
         nested = AstRecord("nested", "Nested", (field("id", "int"),), (), LOCATION)
@@ -109,7 +102,7 @@ class SchemaIrTest(unittest.TestCase):
             LOCATION,
         )
         with self.assertRaisesRegex(AnnotationError, "JSON key 'id' is shared"):
-            build_schema_ir(unit((nested, root)))
+            build_schema(unit((nested, root)))
 
     def test_rejects_invalid_constraint_type(self) -> None:
         root = AstRecord(
@@ -120,7 +113,7 @@ class SchemaIrTest(unittest.TestCase):
             LOCATION,
         )
         with self.assertRaisesRegex(AnnotationError, "minlen/maxlen require"):
-            build_schema_ir(unit((root,)))
+            build_schema(unit((root,)))
 
     def test_builds_array_record_storage_variants_and_marks_ignored_fields(self) -> None:
         annotations = (
@@ -144,10 +137,11 @@ class SchemaIrTest(unittest.TestCase):
                 LOCATION,
             )
             with self.subTest(annotation=annotation):
-                schema = build_schema_ir(unit((record,)))
-                storage = schema.plugins.require(ARRAY_LAYOUT_KEY).records[f"record:{name}"]
-                shape = schema.plugins.require(VALUE_TYPES_KEY).records[f"record:{name}"]
-                self.assertEqual(shape, RecordShape.ARRAY)
+                schema = build_schema(unit((record,)))
+                record_schema = schema.record_map()[f"record:{name}"]
+                storage = record_schema.array
+                assert storage is not None
+                self.assertEqual(record_schema.shape, RecordShape.ARRAY)
                 self.assertEqual(storage.elems_field_id, f"field:{name}.elems")
                 self.assertEqual(storage.element_type_id, "integer:i32")
                 self.assertEqual(
@@ -159,8 +153,8 @@ class SchemaIrTest(unittest.TestCase):
                     f"field:{name}.cap" if "cap=cap" in annotation else None,
                 )
                 self.assertIn(f"field:{name}.reserved", storage.ignored_field_ids)
-                self.assertIn("shape=array", format_schema_ir(schema))
-                self.assertIn("ignored=", format_schema_ir(schema))
+                self.assertIn("shape=array", format_schema(schema))
+                self.assertIn("ignored=", format_schema(schema))
 
     def test_array_record_without_count_rejects_resource_elements(self) -> None:
         record = AstRecord(
@@ -171,7 +165,7 @@ class SchemaIrTest(unittest.TestCase):
             LOCATION,
         )
         with self.assertRaisesRegex(AnnotationError, "without len or cap"):
-            build_schema_ir(unit((record,)))
+            build_schema(unit((record,)))
 
     def test_rejects_invalid_array_record_storage(self) -> None:
         cases = (
@@ -206,7 +200,7 @@ class SchemaIrTest(unittest.TestCase):
                 "vec", "Vec", fields, parse_annotations(annotation, LOCATION), LOCATION
             )
             with self.subTest(annotation=annotation), self.assertRaisesRegex(AnnotationError, message):
-                build_schema_ir(unit((record,)))
+                build_schema(unit((record,)))
 
     def test_rejects_flattening_an_array_record(self) -> None:
         vector = AstRecord(
@@ -224,7 +218,62 @@ class SchemaIrTest(unittest.TestCase):
             LOCATION,
         )
         with self.assertRaisesRegex(AnnotationError, "cannot be flattened"):
-            build_schema_ir(unit((vector, root)))
+            build_schema(unit((vector, root)))
+
+    def test_recursive_types_have_stable_ids_and_ownership(self) -> None:
+        root = AstRecord(
+            "unstable-clang-id",
+            "Root",
+            (field("next", "struct Root *"),),
+            parse_annotations("@jsonStruct", LOCATION),
+            LOCATION,
+        )
+        first = build_schema(unit((root,)))
+        second = build_schema(unit((root,)))
+        next_field = first.field_map()["field:Root.next"]
+        self.assertEqual(first.type_map()[next_field.type_id].target, "record:Root")
+        self.assertTrue(first.record_map()["record:Root"].owns_resources)
+        self.assertEqual(first, second)
+        self.assertEqual(format_schema(first), format_schema(second))
+
+    def test_builtin_annotation_vocabulary_is_strict(self) -> None:
+        cases = (
+            ("@json(requried)", "unknown @json argument"),
+            ("@json(key=a, key=b)", "duplicate @json argument"),
+            ("@json(required=yes)", "is a flag"),
+        )
+        for annotation, message in cases:
+            root = AstRecord(
+                "root",
+                "Root",
+                (field("value", "int", annotation),),
+                parse_annotations("@jsonStruct", LOCATION),
+                LOCATION,
+            )
+            with self.subTest(annotation=annotation), self.assertRaisesRegex(
+                AnnotationError, message
+            ):
+                build_schema(unit((root,)))
+
+    def test_schema_stores_json_options_directly(self) -> None:
+        root = AstRecord(
+            "root",
+            "Root",
+            (
+                field("name", "char *", "@json(required, minlen=0, maxlen=8, omitempty)"),
+                field("score", "int", "@json(min=1, max=9)"),
+            ),
+            parse_annotations("@jsonStruct", LOCATION),
+            LOCATION,
+        )
+        schema = build_schema(unit((root,)))
+        name = schema.field_map()["field:Root.name"]
+        score = schema.field_map()["field:Root.score"]
+        self.assertTrue(name.required)
+        self.assertTrue(name.omitempty)
+        self.assertTrue(name.owns_resources)
+        self.assertEqual(name.max_length, 8)
+        self.assertEqual(score.minimum, "1")
 
 
 if __name__ == "__main__":

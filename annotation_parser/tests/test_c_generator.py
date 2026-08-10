@@ -7,8 +7,8 @@ from pathlib import Path
 
 from annotation_parser.c_generator import generate_c
 from annotation_parser.clang_frontend import ClangFrontend
-from annotation_parser.plan_ir import build_decode_plan, build_release_plan
-from annotation_parser.schema_ir import build_schema_ir
+from annotation_parser.generate_plan import build_generate_plan
+from annotation_parser.schema import build_schema
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -54,8 +54,8 @@ class CGeneratorTest(unittest.TestCase):
             output = path / "model_json.c"
             header.write_text(textwrap.dedent(HEADER), encoding="utf-8")
             unit = ClangFrontend().parse(header, ["-I", str(RUNTIME)])
-            schema = build_schema_ir(unit)
-            source = generate_c(schema, build_decode_plan(schema), build_release_plan(schema), "model.h")
+            schema = build_schema(unit)
+            source = generate_c(schema, build_generate_plan(schema), "model.h")
             output.write_text(source, encoding="utf-8")
             process = subprocess.run(
                 [
@@ -128,10 +128,8 @@ class CGeneratorTest(unittest.TestCase):
             output = path / "array_model_json.c"
             header.write_text(textwrap.dedent(header_source), encoding="utf-8")
             unit = ClangFrontend().parse(header, ["-I", str(RUNTIME)])
-            schema = build_schema_ir(unit)
-            source = generate_c(
-                schema, build_decode_plan(schema), build_release_plan(schema), "array_model.h"
-            )
+            schema = build_schema(unit)
+            source = generate_c(schema, build_generate_plan(schema), "array_model.h")
             output.write_text(source, encoding="utf-8")
             process = subprocess.run(
                 [

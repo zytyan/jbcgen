@@ -40,25 +40,27 @@ PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
   -o example_json.c --include example/example.h -- -I ../runtime
 ```
 
-使用 `--dump-ir schema|decode|release|all` 可将只读调试文本输出到 stderr。
+使用 `--dump-ir schema|plan|all` 可将只读调试文本输出到 stderr。
 
 数组容器的 `elems` 必须指定，`len`、`cap` 可独立省略。JSON `[]` 不申请元素缓冲区，结果为 `elems == NULL` 且已有计数字段为 0；`cap` 保存实际可用元素容量。
 
 ## 架构
 
-Clang frontend 先把 JSON AST 中的 C 类型解析为不可变的 `AstType` 树；后续层不再解析 `qualType` 字符串。Schema 分成两部分：Core 只保存 C 类型图、声明身份、稳定引用和源码位置，JSON 行为由一组强类型插件状态保存。
+Clang frontend 先把 JSON AST 中的 C 类型解析为不可变的 `AstType` 树；后续层不再解析 `qualType` 字符串。Schema 直接保存 C 类型图、JSON 字段语义、数组布局、约束、所有权、入口函数和源码位置。
 
 ```text
 Clang Frontend AstType
           │
           ▼
-  Core Schema IR + PluginSet
-          ├── Decode Plan  ── C decoder
-          ├── Release Plan ── C cleanup
-          └── Encode Plan  ── future
+          Schema
+             │
+             ▼
+       GeneratePlan
+         ├── C decoder
+         └── C cleanup
 ```
 
-Decode Plan 从 Binding、Array Layout、Value Types 和 Constraints 插件构建；Release Plan 独立从 Array Layout、Value Types 和 Ownership 插件构建。两者只共享 Core 的稳定 ID，不互相包含行为节点。`omitempty` 已由 Encode Hints 插件保存，等待未来 Encode Plan 使用。
+每个 `TypePlan` 同时保存 decode/release helper、字段分派、类型依赖和失败回滚关系。Decode 失败调用同一 TypePlan 的 release helper，不再维护互相重复的 Decode Plan、Release Plan 或插件状态。`omitempty` 保存在字段 Schema 中，供未来 encoder 使用。
 
 Python 前端和注解说明见 [annotation_parser/README.md](annotation_parser/README.md)。
 

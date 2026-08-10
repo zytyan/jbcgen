@@ -29,11 +29,11 @@ class AnnotationParserTest(unittest.TestCase):
         self.assertEqual(annotations[0].values("key"), ("raw-key",))
         self.assertEqual(annotations[0].values("altkey"), ("other",))
 
-    def test_parser_preserves_unknown_argument_for_plugin_validation(self) -> None:
+    def test_parser_preserves_unknown_argument_for_schema_validation(self) -> None:
         annotation = parse_annotations("@json(requried)")[0]
         self.assertEqual(annotation.values("requried"), (None,))
 
-    def test_parser_preserves_duplicates_for_plugin_validation(self) -> None:
+    def test_parser_preserves_duplicates_for_schema_validation(self) -> None:
         annotation = parse_annotations("@json(key=a, key=b)")[0]
         self.assertEqual(annotation.values("key"), ("a", "b"))
 
@@ -49,7 +49,7 @@ class AnnotationParserTest(unittest.TestCase):
     def test_argumentless_json_struct_remains_valid(self) -> None:
         self.assertEqual(parse_annotations("@jsonStruct")[0].arguments, ())
 
-    def test_parser_leaves_json_struct_semantics_to_plugins(self) -> None:
+    def test_parser_leaves_json_struct_semantics_to_schema(self) -> None:
         annotation = parse_annotations("@jsonStruct(elems=items, elems=other)")[0]
         self.assertEqual(annotation.values("elems"), ("items", "other"))
 
