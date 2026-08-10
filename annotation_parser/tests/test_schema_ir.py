@@ -11,6 +11,12 @@ from annotation_parser.clang_frontend import (
 )
 from annotation_parser.diagnostics import AnnotationError, SourceLocation
 from annotation_parser.schema_ir import RecordShape, TypeKind, build_schema_ir, format_schema_ir
+from annotation_parser.schema_plugins import (
+    ARRAY_LAYOUT_KEY,
+    BINDING_KEY,
+    OWNERSHIP_KEY,
+    VALUE_TYPES_KEY,
+)
 
 
 LOCATION = SourceLocation("input.h", 1, 1)
@@ -45,7 +51,7 @@ class SchemaIrTest(unittest.TestCase):
             LOCATION,
         )
         schema = build_schema_ir(unit((root,)))
-        value = schema.record_map()["record:Root"].fields[0]
+        value = schema.core.record_map()["record:Root"].fields[0]
         self.assertEqual(value.type_id, "integer:u16")
         self.assertEqual(value.c_type, "opaque_counter_alias")
 
@@ -68,16 +74,17 @@ class SchemaIrTest(unittest.TestCase):
             LOCATION,
         )
         schema = build_schema_ir(unit((city, user)))
-        records = schema.record_map()
+        records = schema.core.record_map()
         self.assertEqual(set(records), {"record:City", "record:User"})
         cities = records["record:User"].fields[0]
         count = records["record:User"].fields[1]
-        self.assertEqual(schema.type_map()[cities.type_id].kind, TypeKind.DYNAMIC_ARRAY)
-        self.assertTrue(cities.required)
-        self.assertTrue(count.is_length_metadata)
-        self.assertTrue(records["record:User"].owns_resources)
+        values = schema.plugins.require(VALUE_TYPES_KEY)
+        self.assertEqual(values.type_map()[values.field_map()[cities.id]].kind, TypeKind.DYNAMIC_ARRAY)
+        self.assertTrue(schema.plugins.require(BINDING_KEY).field_map()[cities.id].required)
+        self.assertIn(count.id, schema.plugins.require(ARRAY_LAYOUT_KEY).metadata_field_ids())
+        self.assertTrue(schema.plugins.require(OWNERSHIP_KEY).record_map()["record:User"])
         rendered = format_schema_ir(schema)
-        self.assertIn("record record:User [public, owns-resources]", rendered)
+        self.assertIn("record record:User", rendered)
         self.assertIn("required", rendered)
 
     def test_rejects_required_flatten(self) -> None:
@@ -138,18 +145,22 @@ class SchemaIrTest(unittest.TestCase):
             )
             with self.subTest(annotation=annotation):
                 schema = build_schema_ir(unit((record,)))
-                result = schema.record_map()[f"record:{name}"]
-                storage = result.array_storage
-                self.assertEqual(result.shape, RecordShape.ARRAY)
-                self.assertIsNotNone(storage)
-                assert storage is not None
-                self.assertEqual(storage.elems_field, "elems")
+                storage = schema.plugins.require(ARRAY_LAYOUT_KEY).record_map()[f"record:{name}"]
+                shape = schema.plugins.require(VALUE_TYPES_KEY).record_map()[f"record:{name}"].shape
+                self.assertEqual(shape, RecordShape.ARRAY)
+                self.assertEqual(storage.elems_field_id, f"field:{name}.elems")
                 self.assertEqual(storage.element_type_id, "integer:i32")
-                self.assertEqual(storage.length_field, "len" if "len=len" in annotation else None)
-                self.assertEqual(storage.capacity_field, "cap" if "cap=cap" in annotation else None)
-                self.assertTrue(next(item for item in result.fields if item.name == "reserved").ignored)
-                self.assertIn("array record", format_schema_ir(schema))
-                self.assertIn("[ignored]", format_schema_ir(schema))
+                self.assertEqual(
+                    storage.length_field_id,
+                    f"field:{name}.len" if "len=len" in annotation else None,
+                )
+                self.assertEqual(
+                    storage.capacity_field_id,
+                    f"field:{name}.cap" if "cap=cap" in annotation else None,
+                )
+                self.assertIn(f"field:{name}.reserved", storage.ignored_field_ids)
+                self.assertIn("shape=array", format_schema_ir(schema))
+                self.assertIn("ignored=", format_schema_ir(schema))
 
     def test_array_record_without_count_rejects_resource_elements(self) -> None:
         record = AstRecord(

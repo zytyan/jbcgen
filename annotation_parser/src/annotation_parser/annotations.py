@@ -22,26 +22,6 @@ class Annotation:
         return tuple(argument.value for argument in self.arguments if argument.name == name)
 
 
-_KNOWN_COMMANDS = {"json", "jsonStruct", "jsonDecode", "jsonCleanup"}
-_JSON_ARGUMENTS = {
-    "key",
-    "altkey",
-    "required",
-    "min",
-    "max",
-    "minlen",
-    "maxlen",
-    "type",
-    "len",
-    "flatten",
-    "omitempty",
-}
-_FLAGS = {"required", "flatten", "omitempty"}
-_REPEATABLE = {"altkey"}
-_JSON_STRUCT_ARGUMENTS = {"asarray", "elems", "len", "cap"}
-_JSON_STRUCT_FLAGS = {"asarray"}
-
-
 def _calls_in_text(text: str) -> list[str]:
     calls: list[str] = []
     index = 0
@@ -96,76 +76,21 @@ def parse_annotations(text: str, location: SourceLocation | None = None) -> tupl
             call = parse_annotation(text_call)
         except SyntaxError as error:
             raise AnnotationError(str(error), location) from error
-        result.append(_validate(call, location))
+        result.append(_convert(call, location))
     return tuple(result)
 
 
-def _validate(call: CallExpression, location: SourceLocation | None) -> Annotation:
+def _convert(call: CallExpression, location: SourceLocation | None) -> Annotation:
     name = call.function.value
-    if name not in _KNOWN_COMMANDS:
-        raise AnnotationError(f"unknown annotation @{name}", location)
-    if name == "jsonStruct":
-        return _validate_json_struct(call, location)
-    if name != "json":
-        if call.arguments:
-            raise AnnotationError(f"@{name} does not accept arguments", location)
-        return Annotation(name, (), location)
-
     arguments: list[AnnotationArgument] = []
-    seen: set[str] = set()
     for expression in call.arguments:
         if isinstance(expression, StringExpression):
             argument = AnnotationArgument(expression.value, None)
         elif isinstance(expression, KeyValueExpression) and isinstance(expression.value, StringExpression):
             argument = AnnotationArgument(expression.key.value, expression.value.value)
         else:
-            raise AnnotationError("@json arguments must be flags or scalar key/value pairs", location)
-        if argument.name not in _JSON_ARGUMENTS:
-            raise AnnotationError(f"unknown @json argument {argument.name!r}", location)
-        if argument.name in _FLAGS and argument.value is not None:
-            raise AnnotationError(f"@json argument {argument.name!r} is a flag", location)
-        if argument.name not in _FLAGS and argument.value is None:
-            raise AnnotationError(f"@json argument {argument.name!r} requires a value", location)
-        if argument.name in seen and argument.name not in _REPEATABLE:
-            raise AnnotationError(f"duplicate @json argument {argument.name!r}", location)
-        seen.add(argument.name)
+            raise AnnotationError(
+                f"@{name} arguments must be flags or scalar key/value pairs", location
+            )
         arguments.append(argument)
     return Annotation(name, tuple(arguments), location)
-
-
-def _validate_json_struct(
-    call: CallExpression, location: SourceLocation | None
-) -> Annotation:
-    # The argumentless spelling is the existing object-record form.
-    if not call.arguments:
-        return Annotation("jsonStruct", (), location)
-
-    arguments: list[AnnotationArgument] = []
-    seen: set[str] = set()
-    for expression in call.arguments:
-        if isinstance(expression, StringExpression):
-            argument = AnnotationArgument(expression.value, None)
-        elif isinstance(expression, KeyValueExpression) and isinstance(expression.value, StringExpression):
-            argument = AnnotationArgument(expression.key.value, expression.value.value)
-        else:
-            raise AnnotationError(
-                "@jsonStruct arguments must be flags or scalar key/value pairs", location
-            )
-        if argument.name not in _JSON_STRUCT_ARGUMENTS:
-            raise AnnotationError(f"unknown @jsonStruct argument {argument.name!r}", location)
-        if argument.name in _JSON_STRUCT_FLAGS and argument.value is not None:
-            raise AnnotationError(f"@jsonStruct argument {argument.name!r} is a flag", location)
-        if argument.name not in _JSON_STRUCT_FLAGS and argument.value is None:
-            raise AnnotationError(
-                f"@jsonStruct argument {argument.name!r} requires a value", location
-            )
-        if argument.name in seen:
-            raise AnnotationError(f"duplicate @jsonStruct argument {argument.name!r}", location)
-        seen.add(argument.name)
-        arguments.append(argument)
-
-    if "asarray" not in seen:
-        raise AnnotationError("parameterized @jsonStruct requires the asarray flag", location)
-    if "elems" not in seen:
-        raise AnnotationError("@jsonStruct(asarray) requires elems=<field>", location)
-    return Annotation("jsonStruct", tuple(arguments), location)

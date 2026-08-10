@@ -102,10 +102,6 @@ class CoreSchemaBuilder:
             parameter_type_ids = tuple(
                 self._intern_type(parameter.type) for parameter in function.parameters
             )
-            for parameter in function.parameters:
-                target = parameter.type.target
-                if target and target.kind is AstTypeKind.RECORD and target.name in self.records_by_name:
-                    self._build_record(target.name)
             functions.append(
                 CoreFunctionSchema(
                     f"function:{function.name}",

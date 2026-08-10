@@ -3,7 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from .schema_ir import FieldSchema, RecordSchema, RecordShape, SchemaIR, TypeKind
+from .schema_core import CoreFieldSchema, CoreRecordSchema
+from .schema_ir import RecordShape, SchemaIR, TypeKind
+from .schema_plugins import (
+    ARRAY_LAYOUT_KEY,
+    BINDING_KEY,
+    CONSTRAINTS_KEY,
+    ENTRYPOINTS_KEY,
+    OWNERSHIP_KEY,
+    VALUE_TYPES_KEY,
+)
 
 
 class DecodeOperation(Enum):
@@ -139,7 +148,7 @@ _DECODE_OPERATIONS = {
 
 
 def _decode_value(type_id: str, schema: SchemaIR) -> DecodeValuePlan:
-    item = schema.type_map()[type_id]
+    item = schema.plugins.require(VALUE_TYPES_KEY).type_map()[type_id]
     return DecodeValuePlan(
         type_id,
         _DECODE_OPERATIONS[item.kind],
@@ -150,60 +159,73 @@ def _decode_value(type_id: str, schema: SchemaIR) -> DecodeValuePlan:
 
 
 def _decode_fields(
-    record: RecordSchema,
+    record: CoreRecordSchema,
     schema: SchemaIR,
     prefix: tuple[str, ...] = (),
 ) -> list[DecodeFieldPlan]:
-    records = schema.record_map()
+    records = schema.core.record_map()
+    bindings = schema.plugins.require(BINDING_KEY).field_map()
+    arrays = schema.plugins.require(ARRAY_LAYOUT_KEY)
+    array_fields = arrays.field_map()
+    metadata = arrays.metadata_field_ids()
+    field_types = schema.plugins.require(VALUE_TYPES_KEY).field_map()
+    constraints = schema.plugins.require(CONSTRAINTS_KEY).field_map()
+    core_fields = schema.core.field_map()
     result: list[DecodeFieldPlan] = []
     for field in record.fields:
-        if field.is_length_metadata:
+        if field.id in metadata:
             continue
+        binding = bindings[field.id]
         path = prefix + (field.name,)
-        if field.flatten:
+        if binding.flatten:
             nested = records[field.type_id]
             result.extend(_decode_fields(nested, schema, path))
             continue
+        layout = array_fields.get(field.id)
+        constraint = constraints.get(field.id)
+        length_field = core_fields[layout.length_field_id] if layout else None
         result.append(
             DecodeFieldPlan(
                 path,
-                (field.key, *field.altkeys),
+                (binding.key, *binding.altkeys),
                 -1,
-                field.required,
-                _decode_value(field.type_id, schema),
-                prefix + (field.length_field,) if field.length_field else None,
-                field.minimum,
-                field.maximum,
-                field.min_length,
-                field.max_length,
-                (
-                    next(item for item in record.fields if item.name == field.length_field).type_id
-                    if field.length_field
-                    else None
-                ),
+                binding.required,
+                _decode_value(field_types[field.id], schema),
+                prefix + (length_field.name,) if length_field else None,
+                constraint.minimum if constraint else None,
+                constraint.maximum if constraint else None,
+                constraint.min_length if constraint else None,
+                constraint.max_length if constraint else None,
+                field_types[length_field.id] if length_field else None,
             )
         )
     return result
 
 
 def build_decode_plan(schema: SchemaIR) -> DecodePlan:
-    values = tuple(_decode_value(item.id, schema) for item in schema.types)
+    value_state = schema.plugins.require(VALUE_TYPES_KEY)
+    values = tuple(_decode_value(item.id, schema) for item in value_state.types)
+    arrays_state = schema.plugins.require(ARRAY_LAYOUT_KEY)
+    array_records = arrays_state.record_map()
+    field_types = value_state.field_map()
+    core_fields = schema.core.field_map()
     objects: list[DecodeObjectPlan] = []
     arrays: list[DecodeArrayPlan] = []
-    for record in schema.records:
-        if record.shape is RecordShape.ARRAY:
-            storage = record.array_storage
-            assert storage is not None
-            fields = {field.name: field for field in record.fields}
+    for record in schema.core.records:
+        storage = array_records.get(record.id)
+        if storage is not None:
+            elems = core_fields[storage.elems_field_id]
+            length = core_fields[storage.length_field_id] if storage.length_field_id else None
+            capacity = core_fields[storage.capacity_field_id] if storage.capacity_field_id else None
             arrays.append(
                 DecodeArrayPlan(
                     record.id,
-                    (storage.elems_field,),
-                    _decode_value(storage.element_type_id, schema),
-                    (storage.length_field,) if storage.length_field else None,
-                    fields[storage.length_field].type_id if storage.length_field else None,
-                    (storage.capacity_field,) if storage.capacity_field else None,
-                    fields[storage.capacity_field].type_id if storage.capacity_field else None,
+                    (elems.name,),
+                    _decode_value(value_state.core_type_map()[storage.element_type_id], schema),
+                    (length.name,) if length else None,
+                    field_types[length.id] if length else None,
+                    (capacity.name,) if capacity else None,
+                    field_types[capacity.id] if capacity else None,
                     record.id,
                 )
             )
@@ -234,16 +256,17 @@ def build_decode_plan(schema: SchemaIR) -> DecodePlan:
             )
         )
     entries = tuple(
-        DecodeEntryPlan(function.name, function.record_id)
-        for function in schema.functions
-        if function.role == "jsonDecode"
+        DecodeEntryPlan(item.function_id.removeprefix("function:"), item.record_id)
+        for item in schema.plugins.require(ENTRYPOINTS_KEY).functions
+        if item.role == "jsonDecode"
     )
     return DecodePlan(values, tuple(objects), tuple(arrays), entries)
 
 
-def _release_operation(field: FieldSchema, schema: SchemaIR) -> ReleaseOperation | None:
-    item = schema.type_map()[field.type_id]
-    if not field.owns_resources:
+def _release_operation(field: CoreFieldSchema, schema: SchemaIR) -> ReleaseOperation | None:
+    type_id = schema.plugins.require(VALUE_TYPES_KEY).field_map()[field.id]
+    item = schema.plugins.require(VALUE_TYPES_KEY).type_map()[type_id]
+    if not schema.plugins.require(OWNERSHIP_KEY).field_map()[field.id]:
         return None
     if item.kind is TypeKind.STRING:
         return ReleaseOperation.STRING
@@ -259,61 +282,67 @@ def _release_operation(field: FieldSchema, schema: SchemaIR) -> ReleaseOperation
 
 
 def build_release_plan(schema: SchemaIR) -> ReleasePlan:
-    type_map = schema.type_map()
+    values = schema.plugins.require(VALUE_TYPES_KEY)
+    type_map = values.type_map()
+    field_types = values.field_map()
+    layouts = schema.plugins.require(ARRAY_LAYOUT_KEY)
+    array_records = layouts.record_map()
+    metadata = layouts.metadata_field_ids()
+    ownership = schema.plugins.require(OWNERSHIP_KEY)
+    core_fields = schema.core.field_map()
     objects: list[ReleaseObjectPlan] = []
     arrays: list[ReleaseArrayPlan] = []
-    for record in schema.records:
-        if record.shape is RecordShape.ARRAY:
-            storage = record.array_storage
-            assert storage is not None
+    for record in schema.core.records:
+        storage = array_records.get(record.id)
+        if storage is not None:
+            elems = core_fields[storage.elems_field_id]
+            length = core_fields[storage.length_field_id] if storage.length_field_id else None
+            capacity = core_fields[storage.capacity_field_id] if storage.capacity_field_id else None
+            element_type_id = values.core_type_map()[storage.element_type_id]
             arrays.append(
                 ReleaseArrayPlan(
                     record.id,
-                    (storage.elems_field,),
-                    storage.element_type_id,
-                    (storage.length_field,) if storage.length_field else None,
-                    (storage.capacity_field,) if storage.capacity_field else None,
-                    _type_owns(storage.element_type_id, schema),
+                    (elems.name,),
+                    element_type_id,
+                    (length.name,) if length else None,
+                    (capacity.name,) if capacity else None,
+                    ownership.type_map()[element_type_id],
                     True,
                 )
             )
             continue
         fields: list[ReleaseFieldPlan] = []
         for field in record.fields:
-            if field.is_length_metadata:
+            if field.id in metadata:
                 continue
             operation = _release_operation(field, schema)
             if operation is None:
                 continue
-            item = type_map[field.type_id]
+            type_id = field_types[field.id]
+            item = type_map[type_id]
+            layout = layouts.field_map().get(field.id)
+            length = core_fields[layout.length_field_id] if layout else None
             fields.append(
                 ReleaseFieldPlan(
                     (field.name,),
-                    field.type_id,
+                    type_id,
                     operation,
                     item.target,
-                    (field.length_field,) if field.length_field else None,
+                    (length.name,) if length else None,
                     item.capacity,
                 )
             )
         objects.append(ReleaseObjectPlan(record.id, tuple(fields), True))
     entries = tuple(
-        ReleaseEntryPlan(function.name, function.record_id)
-        for function in schema.functions
-        if function.role == "jsonCleanup"
+        ReleaseEntryPlan(item.function_id.removeprefix("function:"), item.record_id)
+        for item in schema.plugins.require(ENTRYPOINTS_KEY).functions
+        if item.role == "jsonCleanup"
     )
     return ReleasePlan(tuple(objects), tuple(arrays), entries)
 
 
 def _type_owns(type_id: str, schema: SchemaIR) -> bool:
-    item = schema.type_map()[type_id]
-    if item.kind in {TypeKind.STRING, TypeKind.DYNAMIC_ARRAY, TypeKind.POINTER}:
-        return item.capacity is None
-    if item.kind is TypeKind.FIXED_ARRAY and item.target is not None:
-        return _type_owns(item.target, schema)
-    if item.kind is TypeKind.RECORD:
-        return schema.record_map()[item.id].owns_resources
-    return False
+    return schema.plugins.require(OWNERSHIP_KEY).type_map()[type_id]
 
 
 def _path(path: tuple[str, ...]) -> str:

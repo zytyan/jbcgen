@@ -167,6 +167,7 @@ class FieldBinding:
     altkeys: tuple[str, ...]
     required: bool
     flatten: bool
+    explicit_key: bool
 
 
 @dataclass(frozen=True)
@@ -215,6 +216,7 @@ class BindingPlugin:
                         altkeys,
                         _flag(annotation, "required"),
                         _flag(annotation, "flatten"),
+                        _one(annotation, "key") is not None,
                     )
                 )
         return BindingState(tuple(sorted(bindings, key=lambda item: item.field_id)))
@@ -235,8 +237,21 @@ class BindingPlugin:
                     "flatten requires a by-value structure field", field.location
                 )
 
+        array_layout = plugins.get(ARRAY_LAYOUT_KEY)
+        array_records = (
+            {item.record_id for item in array_layout.records} if array_layout else set()
+        )
+        metadata = array_layout.metadata_field_ids() if array_layout else frozenset()
+        ignored = (
+            {field_id for item in array_layout.records for field_id in item.ignored_field_ids}
+            if array_layout
+            else set()
+        )
+
         def add_record(record_id: str, keys: dict[str, str], prefix: str) -> None:
             for field in records[record_id].fields:
+                if field.id in metadata or field.id in ignored:
+                    continue
                 binding = bindings[field.id]
                 if binding.flatten:
                     add_record(field.type_id, keys, prefix + field.name + ".")
@@ -250,10 +265,6 @@ class BindingPlugin:
                         )
                     keys[key] = prefix + field.name
 
-        array_layout = plugins.get(ARRAY_LAYOUT_KEY)
-        array_records = (
-            {item.record_id for item in array_layout.records} if array_layout else set()
-        )
         for record in core.records:
             if record.id in array_records:
                 continue
@@ -340,6 +351,11 @@ class ArrayLayoutPlugin:
             ast_record = ast_records[record.name]
             core_fields = {item.name: item for item in record.fields}
             annotation = _annotation(ast_record.annotations, "jsonStruct", ast_record.location)
+            if annotation and annotation.arguments and not _flag(annotation, "asarray"):
+                raise AnnotationError(
+                    "parameterized @jsonStruct requires the asarray flag",
+                    ast_record.location,
+                )
             if _flag(annotation, "asarray"):
                 record_layouts.append(
                     self._build_record_layout(ast_record, record.fields, types, annotation)

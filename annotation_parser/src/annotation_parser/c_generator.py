@@ -16,7 +16,9 @@ from .plan_ir import (
     ReleaseOperation,
     ReleasePlan,
 )
-from .schema_ir import FieldSchema, RecordSchema, RecordShape, SchemaIR, TypeKind
+from .schema_core import CoreFieldSchema, CoreRecordSchema
+from .schema_ir import RecordShape, SchemaIR, TypeKind
+from .schema_plugins import VALUE_TYPES_KEY
 
 
 def _c_string(value: str) -> str:
@@ -40,8 +42,10 @@ class CGenerator:
         self.schema = schema
         self.decode_plan = decode_plan
         self.release_plan = release_plan
-        self.types = schema.type_map()
-        self.records = schema.record_map()
+        value_types = schema.plugins.require(VALUE_TYPES_KEY)
+        self.types = value_types.type_map()
+        self.records = schema.core.record_map()
+        self.record_values = value_types.record_map()
         self.decode_objects = {item.record_id: item for item in decode_plan.objects}
         self.decode_arrays = {item.record_id: item for item in decode_plan.arrays}
         self.release_objects = {item.record_id: item for item in release_plan.objects}
@@ -63,14 +67,14 @@ class CGenerator:
         ]
         lines.extend(self._error_helpers())
         lines.append("")
-        for record in self.schema.records:
+        for record in self.schema.core.records:
             lines.append(self._release_prototype(record) + ";")
             lines.append(self._decode_prototype(record) + ";")
         lines.append("")
-        for record in self.schema.records:
+        for record in self.schema.core.records:
             lines.extend(self._generate_release(record))
             lines.append("")
-        for record in self.schema.records:
+        for record in self.schema.core.records:
             lines.extend(self._generate_decode(record))
             lines.append("")
         lines.extend(self._generate_public_functions())
@@ -85,47 +89,16 @@ class CGenerator:
     def _decode_name(self, record_id: str) -> str:
         return f"jbc_decode_{self._helper_suffix(record_id)}"
 
-    def _release_prototype(self, record: RecordSchema) -> str:
+    def _release_prototype(self, record: CoreRecordSchema) -> str:
         return f"static void {self._release_name(record.id)}(json_allocator *allocator, {record.c_type} *out)"
 
-    def _decode_prototype(self, record: RecordSchema) -> str:
+    def _decode_prototype(self, record: CoreRecordSchema) -> str:
         return f"static bool {self._decode_name(record.id)}(json_parser *parser, {record.c_type} *out)"
 
     def _validate_entrypoints(self) -> None:
-        cleanup_records = {
-            entry.record_id for entry in self.release_plan.entries if entry.record_id is not None
-        }
-        for function in self.schema.functions:
-            if function.role == "jsonDecode":
-                if function.return_kind != "bool" or len(function.parameter_types) != 2:
-                    raise AnnotationError(
-                        "@jsonDecode requires bool function(json_parser *, T *)",
-                        function.location,
-                    )
-                if (
-                    function.parameter_kinds[0] != "pointer"
-                    or function.parameter_target_names[0] != "json_parser"
-                ):
-                    raise AnnotationError("the first @jsonDecode parameter must be json_parser *", function.location)
-                if function.record_id is None or function.record_id not in self.records:
-                    raise AnnotationError("the second @jsonDecode parameter must point to a known structure", function.location)
-                if not self.records[function.record_id].public:
-                    raise AnnotationError("the @jsonDecode target must have @jsonStruct", function.location)
-                if function.record_id not in cleanup_records:
-                    raise AnnotationError("each @jsonDecode target requires an @jsonCleanup function", function.location)
-            elif function.role == "jsonCleanup":
-                if function.return_kind != "void" or len(function.parameter_types) != 2:
-                    raise AnnotationError(
-                        "@jsonCleanup requires void function(json_allocator *, T *)",
-                        function.location,
-                    )
-                if (
-                    function.parameter_kinds[0] != "pointer"
-                    or function.parameter_target_names[0] != "json_allocator"
-                ):
-                    raise AnnotationError("the first @jsonCleanup parameter must be json_allocator *", function.location)
-                if function.record_id is None or function.record_id not in self.records:
-                    raise AnnotationError("the second @jsonCleanup parameter must point to a known structure", function.location)
+        # Entrypoint signatures and target roles are validated by the Entrypoints
+        # plugin before plans or generated C can be constructed.
+        return
 
     def _error_helpers(self) -> list[str]:
         fields = [field for obj in self.decode_plan.objects for field in obj.fields]
@@ -221,9 +194,9 @@ class CGenerator:
     def _field_expression(self, path: tuple[str, ...], base: str = "out") -> str:
         return base + "->" + ".".join(path)
 
-    def _field_schema(self, record: RecordSchema, path: tuple[str, ...]) -> FieldSchema:
+    def _field_schema(self, record: CoreRecordSchema, path: tuple[str, ...]) -> CoreFieldSchema:
         current = record
-        result: FieldSchema | None = None
+        result: CoreFieldSchema | None = None
         for index, name in enumerate(path):
             result = next(field for field in current.fields if field.name == name)
             if index + 1 < len(path):
@@ -231,8 +204,8 @@ class CGenerator:
         assert result is not None
         return result
 
-    def _generate_release(self, record: RecordSchema) -> list[str]:
-        if record.shape is RecordShape.ARRAY:
+    def _generate_release(self, record: CoreRecordSchema) -> list[str]:
+        if self.record_values[record.id].shape is RecordShape.ARRAY:
             return self._generate_array_release(record, self.release_arrays[record.id])
         plan = self.release_objects[record.id]
         lines = [self._release_prototype(record), "{", "    if (out == NULL) {", "        return;", "    }"]
@@ -245,7 +218,7 @@ class CGenerator:
         return lines
 
     def _generate_array_release(
-        self, record: RecordSchema, plan: ReleaseArrayPlan
+        self, record: CoreRecordSchema, plan: ReleaseArrayPlan
     ) -> list[str]:
         elems = self._field_expression(plan.elems_path)
         count_path = plan.length_path or plan.capacity_path
@@ -332,8 +305,8 @@ class CGenerator:
                 lines.append(f"{pad}{length_expression} = 0;")
         return lines
 
-    def _generate_decode(self, record: RecordSchema) -> list[str]:
-        if record.shape is RecordShape.ARRAY:
+    def _generate_decode(self, record: CoreRecordSchema) -> list[str]:
+        if self.record_values[record.id].shape is RecordShape.ARRAY:
             return self._generate_array_decode(record, self.decode_arrays[record.id])
         plan = self.decode_objects[record.id]
         count = max(1, len(plan.fields))
@@ -444,7 +417,7 @@ class CGenerator:
         ]
 
     def _generate_array_decode(
-        self, record: RecordSchema, plan: DecodeArrayPlan
+        self, record: CoreRecordSchema, plan: DecodeArrayPlan
     ) -> list[str]:
         target = self.types[plan.element.type_id]
         elems = self._field_expression(plan.elems_path)
@@ -550,7 +523,7 @@ class CGenerator:
         ])
         return lines
 
-    def _generate_field_case(self, record: RecordSchema, field: DecodeFieldPlan) -> list[str]:
+    def _generate_field_case(self, record: CoreRecordSchema, field: DecodeFieldPlan) -> list[str]:
         index = field.seen_index
         expression = self._field_expression(field.path)
         length = self._field_expression(field.length_path) if field.length_path else None
@@ -769,12 +742,12 @@ class CGenerator:
             target_record = self.records[target.id]
             token = (
                 "JSON_TOKEN_LBRACKET"
-                if target_record.shape is RecordShape.ARRAY
+                if self.record_values[target_record.id].shape is RecordShape.ARRAY
                 else "JSON_TOKEN_LBRACE"
             )
             expected = (
                 "JSON_EXPECTED_ARRAY"
-                if target_record.shape is RecordShape.ARRAY
+                if self.record_values[target_record.id].shape is RecordShape.ARRAY
                 else "JSON_EXPECTED_OBJECT"
             )
             lines.extend([
@@ -997,11 +970,11 @@ class CGenerator:
 
     def _generate_public_functions(self) -> list[str]:
         lines: list[str] = []
-        functions = {item.name: item for item in self.schema.functions}
+        functions = {item.name: item for item in self.schema.core.functions}
         for entry in self.decode_plan.entries:
             function = functions[entry.function_name]
             assert entry.record_id is not None
-            output_type = function.parameter_types[1].strip()
+            output_type = function.parameter_c_types[1].strip()
             lines.extend([
                 f"bool {function.name}(json_parser *parser, {output_type} out)",
                 "{",
@@ -1017,7 +990,7 @@ class CGenerator:
         for entry in self.release_plan.entries:
             function = functions[entry.function_name]
             assert entry.record_id is not None
-            output_type = function.parameter_types[1].strip()
+            output_type = function.parameter_c_types[1].strip()
             lines.extend([
                 f"void {function.name}(json_allocator *allocator, {output_type} out)",
                 "{",

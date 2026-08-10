@@ -29,13 +29,13 @@ class AnnotationParserTest(unittest.TestCase):
         self.assertEqual(annotations[0].values("key"), ("raw-key",))
         self.assertEqual(annotations[0].values("altkey"), ("other",))
 
-    def test_rejects_unknown_argument(self) -> None:
-        with self.assertRaisesRegex(AnnotationError, "unknown @json argument"):
-            parse_annotations("@json(requried)")
+    def test_parser_preserves_unknown_argument_for_plugin_validation(self) -> None:
+        annotation = parse_annotations("@json(requried)")[0]
+        self.assertEqual(annotation.values("requried"), (None,))
 
-    def test_rejects_duplicate_single_value(self) -> None:
-        with self.assertRaisesRegex(AnnotationError, "duplicate @json argument"):
-            parse_annotations("@json(key=a, key=b)")
+    def test_parser_preserves_duplicates_for_plugin_validation(self) -> None:
+        annotation = parse_annotations("@json(key=a, key=b)")[0]
+        self.assertEqual(annotation.values("key"), ("a", "b"))
 
     def test_json_struct_array_arguments(self) -> None:
         annotation = parse_annotations(
@@ -49,18 +49,9 @@ class AnnotationParserTest(unittest.TestCase):
     def test_argumentless_json_struct_remains_valid(self) -> None:
         self.assertEqual(parse_annotations("@jsonStruct")[0].arguments, ())
 
-    def test_rejects_incomplete_or_duplicate_json_struct_arguments(self) -> None:
-        cases = (
-            ("@jsonStruct(elems=items)", "requires the asarray flag"),
-            ("@jsonStruct(asarray)", "requires elems"),
-            ("@jsonStruct(asarray, elems=a, elems=b)", "duplicate @jsonStruct argument"),
-            ("@jsonStruct(asarray=yes, elems=a)", "is a flag"),
-            ("@jsonStruct(asarray, elems)", "requires a value"),
-            ("@jsonStruct(asarray, elems=a, other=b)", "unknown @jsonStruct argument"),
-        )
-        for text, message in cases:
-            with self.subTest(text=text), self.assertRaisesRegex(AnnotationError, message):
-                parse_annotations(text)
+    def test_parser_leaves_json_struct_semantics_to_plugins(self) -> None:
+        annotation = parse_annotations("@jsonStruct(elems=items, elems=other)")[0]
+        self.assertEqual(annotation.values("elems"), ("items", "other"))
 
 
 if __name__ == "__main__":
