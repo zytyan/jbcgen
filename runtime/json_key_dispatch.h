@@ -17,6 +17,7 @@ typedef struct json_key_entry {
 } json_key_entry;
 
 typedef struct json_key_map {
+    /* Entries must be sorted by key length, then by memcmp byte order. */
     const json_key_entry *entries;
     size_t len;
 } json_key_map;

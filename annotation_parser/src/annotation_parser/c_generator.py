@@ -310,7 +310,10 @@ class CGenerator:
             return self._generate_array_decode(record, self.decode_arrays[record.id])
         plan = self.decode_objects[record.id]
         count = max(1, len(plan.fields))
-        key_entries = [(key, field.seen_index) for field in plan.fields for key in field.keys]
+        key_entries = sorted(
+            ((key, field.seen_index) for field in plan.fields for key in field.keys),
+            key=lambda entry: (len(entry[0].encode("utf-8")), entry[0].encode("utf-8")),
+        )
         lines = [
             self._decode_prototype(record),
             "{",

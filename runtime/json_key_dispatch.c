@@ -1,14 +1,43 @@
 #include "json_key_dispatch.h"
 
+#include <string.h>
+
+static int json_key_compare(const json_slice *left, const json_slice *right)
+{
+    if (left->len < right->len) {
+        return -1;
+    }
+    if (left->len > right->len) {
+        return 1;
+    }
+    if (left->len == 0) {
+        return 0;
+    }
+    return memcmp(left->ptr, right->ptr, left->len);
+}
+
 bool json_key_dispatch(const json_key_map *map, const json_slice *key, uint32_t *id)
 {
-    if (map == NULL || key == NULL || id == NULL) {
+    if (map == NULL || key == NULL || id == NULL ||
+        (map->len != 0 && map->entries == NULL) ||
+        (key->len != 0 && key->ptr == NULL)) {
         return false;
     }
-    for (size_t index = 0; index < map->len; ++index) {
-        if (json_slice_eq(&map->entries[index].key, key)) {
-            *id = map->entries[index].id;
+
+    size_t begin = 0;
+    size_t end = map->len;
+    while (begin < end) {
+        const size_t middle = begin + (end - begin) / 2;
+        const json_key_entry *entry = &map->entries[middle];
+        const int order = json_key_compare(key, &entry->key);
+        if (order == 0) {
+            *id = entry->id;
             return true;
+        }
+        if (order < 0) {
+            end = middle;
+        } else {
+            begin = middle + 1;
         }
     }
     return false;
