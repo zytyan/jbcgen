@@ -116,6 +116,8 @@ typedef struct {
 
 ```sh
 cd annotation_parser
+uvx ruff==0.16.2 format --check src tests
+uvx ruff==0.16.2 check src tests
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 
 cd ../runtime

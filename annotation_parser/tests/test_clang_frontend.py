@@ -40,10 +40,16 @@ class ClangFrontendTest(unittest.TestCase):
         self.assertEqual(name.annotations[0].values("required"), (None,))
         self.assertEqual(name.annotations[0].values("altkey"), ("display-name",))
         self.assertEqual(
-            {annotation.name for function in unit.functions for annotation in function.annotations},
+            {
+                annotation.name
+                for function in unit.functions
+                for annotation in function.annotations
+            },
             {"jsonDecode", "jsonCleanup"},
         )
-        decode = next(function for function in unit.functions if function.name == "decodeItem")
+        decode = next(
+            function for function in unit.functions if function.name == "decodeItem"
+        )
         self.assertEqual(decode.return_type.kind, AstTypeKind.BOOL)
         self.assertEqual(decode.parameters[0].type.kind, AstTypeKind.POINTER)
         self.assertEqual(decode.parameters[0].type.target.name, "json_parser")
@@ -72,7 +78,9 @@ class ClangFrontendTest(unittest.TestCase):
             unit = ClangFrontend().parse(header)
 
         named = next(record for record in unit.records if record.name == "NamedVec")
-        anonymous = next(record for record in unit.records if record.name == "AnonymousVec")
+        anonymous = next(
+            record for record in unit.records if record.name == "AnonymousVec"
+        )
         self.assertEqual(named.c_type, "struct NamedVec")
         self.assertEqual(anonymous.c_type, "AnonymousVec")
         self.assertEqual(anonymous.fields[0].type.kind, AstTypeKind.POINTER)
@@ -104,7 +112,9 @@ class ClangFrontendTest(unittest.TestCase):
 
         record = next(item for item in unit.records if item.name == "Types")
         fields = {field.name: field.type for field in record.fields}
-        self.assertEqual((fields["count"].kind, fields["count"].bits), (AstTypeKind.INTEGER, 16))
+        self.assertEqual(
+            (fields["count"].kind, fields["count"].bits), (AstTypeKind.INTEGER, 16)
+        )
         self.assertFalse(fields["count"].signed)
         self.assertEqual(fields["mode"].kind, AstTypeKind.ENUM)
         self.assertEqual(fields["mode"].name, "Mode")

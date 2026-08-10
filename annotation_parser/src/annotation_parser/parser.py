@@ -43,13 +43,17 @@ class Parser:
     def expect_kind(self, *kinds: TokenKind) -> Token:
         token = self.peek()
         if token.kind not in kinds:
-            raise SyntaxError(f"expected {kinds} at offset {token.offset}, got {token.kind.value}")
+            raise SyntaxError(
+                f"expected {kinds} at offset {token.offset}, got {token.kind.value}"
+            )
         return self.next()
 
     def expect_punctuation(self, value: str) -> Token:
         token = self.peek()
         if token.kind is not TokenKind.PUNCTUATION or token.value != value:
-            raise SyntaxError(f"expected {value!r} at offset {token.offset}, got {token.value!r}")
+            raise SyntaxError(
+                f"expected {value!r} at offset {token.offset}, got {token.value!r}"
+            )
         return self.next()
 
     def parse_identifier(self) -> StringExpression:
@@ -85,7 +89,11 @@ class Parser:
 
     def parse_annotation(self) -> CallExpression:
         function = self.parse_identifier()
-        result = self.parse_call(function) if self.peek().value == "(" else CallExpression(function, ())
+        result = (
+            self.parse_call(function)
+            if self.peek().value == "("
+            else CallExpression(function, ())
+        )
         self.expect_kind(TokenKind.EOF)
         return result
 

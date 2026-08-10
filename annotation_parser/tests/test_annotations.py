@@ -1,7 +1,6 @@
 import unittest
 
 from annotation_parser.annotations import parse_annotations
-from annotation_parser.diagnostics import AnnotationError
 from annotation_parser.parser import parse_annotation
 
 
@@ -25,7 +24,7 @@ class AnnotationParserTest(unittest.TestCase):
         self.assertEqual(parsed.arguments, ())
 
     def test_raw_and_quoted_strings(self) -> None:
-        annotations = parse_annotations("@json(key=r`raw-key`, altkey=\"other\")")
+        annotations = parse_annotations('@json(key=r`raw-key`, altkey="other")')
         self.assertEqual(annotations[0].values("key"), ("raw-key",))
         self.assertEqual(annotations[0].values("altkey"), ("other",))
 

@@ -2,16 +2,22 @@ import unittest
 from pathlib import Path
 
 from annotation_parser.annotations import parse_annotations
-from annotation_parser.clang_frontend import AstField, AstRecord, TranslationUnit, parse_type_spelling
+from annotation_parser.clang_frontend import (
+    AstField,
+    AstRecord,
+    TranslationUnit,
+    parse_type_spelling,
+)
 from annotation_parser.diagnostics import SourceLocation
 from annotation_parser.generate_plan import build_generate_plan, format_generate_plan
 from annotation_parser.schema import RecordShape, TypeKind, build_schema
 
-
 LOCATION = SourceLocation("plan.h", 1, 1)
 
 
-def field(name: str, c_type: str, annotation: str = "", desugared: str | None = None) -> AstField:
+def field(
+    name: str, c_type: str, annotation: str = "", desugared: str | None = None
+) -> AstField:
     return AstField(
         name,
         name,
@@ -81,7 +87,9 @@ class GeneratePlanTest(unittest.TestCase):
         schema = make_schema()
         root = build_generate_plan(schema).type_map()["record:Root"]
         keys = [item.key for item in root.key_entries]
-        self.assertEqual(keys, sorted(keys, key=lambda key: (len(key.encode()), key.encode())))
+        self.assertEqual(
+            keys, sorted(keys, key=lambda key: (len(key.encode()), key.encode()))
+        )
 
     def test_recursive_pointer_plan_does_not_expand_infinitely(self) -> None:
         node = AstRecord(

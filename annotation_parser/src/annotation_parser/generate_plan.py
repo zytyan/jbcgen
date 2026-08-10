@@ -58,25 +58,37 @@ class GeneratePlanBuilder:
         self.metadata = schema.metadata_field_ids()
 
     def build(self) -> GeneratePlan:
-        return GeneratePlan(tuple(self._type_plan(record.id) for record in self.schema.records))
+        return GeneratePlan(
+            tuple(self._type_plan(record.id) for record in self.schema.records)
+        )
 
     def _type_plan(self, record_id: str) -> TypePlan:
         record = self.records[record_id]
-        fields = () if record.shape is RecordShape.ARRAY else self._object_fields(record_id)
+        fields = (
+            () if record.shape is RecordShape.ARRAY else self._object_fields(record_id)
+        )
         keys = tuple(
             sorted(
                 (
                     KeyEntryPlan(key, field.seen_index)
                     for field in fields
-                    for key in (self.fields[field.field_id].key, *self.fields[field.field_id].altkeys)
+                    for key in (
+                        self.fields[field.field_id].key,
+                        *self.fields[field.field_id].altkeys,
+                    )
                 ),
-                key=lambda item: (len(item.key.encode("utf-8")), item.key.encode("utf-8")),
+                key=lambda item: (
+                    len(item.key.encode("utf-8")),
+                    item.key.encode("utf-8"),
+                ),
             )
         )
         owned = tuple(
             field.id
             for field in record.fields
-            if field.owns_resources and not field.ignored and field.id not in self.metadata
+            if field.owns_resources
+            and not field.ignored
+            and field.id not in self.metadata
         )
         release = _helper_name("release", record_id)
         return TypePlan(
@@ -102,7 +114,9 @@ class GeneratePlanBuilder:
             if field.flatten:
                 result.extend(self._object_fields(field.type_id, path))
                 continue
-            length = self.fields[field.length_field_id] if field.length_field_id else None
+            length = (
+                self.fields[field.length_field_id] if field.length_field_id else None
+            )
             result.append(
                 FieldPlan(
                     field.id,
@@ -161,7 +175,10 @@ def format_generate_plan(plan: GeneratePlan, schema: Schema) -> str:
         if item.shape is RecordShape.ARRAY:
             layout = records[item.record_id].array
             assert layout is not None
-            parts = [f"elems={layout.elems_field_id}", f"element={layout.element_type_id}"]
+            parts = [
+                f"elems={layout.elems_field_id}",
+                f"element={layout.element_type_id}",
+            ]
             if layout.length_field_id:
                 parts.append(f"write-length={layout.length_field_id}")
             if layout.capacity_field_id:
@@ -184,6 +201,8 @@ def format_generate_plan(plan: GeneratePlan, schema: Schema) -> str:
         if item.key_entries:
             lines.append(
                 "    key-order "
-                + repr(tuple((entry.key, entry.field_index) for entry in item.key_entries))
+                + repr(
+                    tuple((entry.key, entry.field_index) for entry in item.key_entries)
+                )
             )
     return "\n".join(lines)

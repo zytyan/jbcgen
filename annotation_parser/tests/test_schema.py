@@ -12,11 +12,12 @@ from annotation_parser.clang_frontend import (
 from annotation_parser.diagnostics import AnnotationError, SourceLocation
 from annotation_parser.schema import RecordShape, TypeKind, build_schema, format_schema
 
-
 LOCATION = SourceLocation("input.h", 1, 1)
 
 
-def field(name: str, c_type: str, annotation: str = "", desugared: str | None = None) -> AstField:
+def field(
+    name: str, c_type: str, annotation: str = "", desugared: str | None = None
+) -> AstField:
     return AstField(
         f"field-{name}",
         name,
@@ -53,7 +54,10 @@ class SchemaTest(unittest.TestCase):
         city = AstRecord(
             "city",
             "City",
-            (field("id", "int"), field("name", "char[32]", "@json(required, maxlen=20)")),
+            (
+                field("id", "int"),
+                field("name", "char[32]", "@json(required, maxlen=20)"),
+            ),
             (),
             LOCATION,
         )
@@ -89,7 +93,9 @@ class SchemaTest(unittest.TestCase):
             parse_annotations("@jsonStruct", LOCATION),
             LOCATION,
         )
-        with self.assertRaisesRegex(AnnotationError, "required cannot be combined with flatten"):
+        with self.assertRaisesRegex(
+            AnnotationError, "required cannot be combined with flatten"
+        ):
             build_schema(unit((nested, root)))
 
     def test_rejects_flatten_key_collision(self) -> None:
@@ -115,7 +121,9 @@ class SchemaTest(unittest.TestCase):
         with self.assertRaisesRegex(AnnotationError, "minlen/maxlen require"):
             build_schema(unit((root,)))
 
-    def test_builds_array_record_storage_variants_and_marks_ignored_fields(self) -> None:
+    def test_builds_array_record_storage_variants_and_marks_ignored_fields(
+        self,
+    ) -> None:
         annotations = (
             "@jsonStruct(asarray, elems=elems, len=len, cap=cap)",
             "@jsonStruct(asarray, elems=elems, len=len)",
@@ -199,7 +207,10 @@ class SchemaTest(unittest.TestCase):
             record = AstRecord(
                 "vec", "Vec", fields, parse_annotations(annotation, LOCATION), LOCATION
             )
-            with self.subTest(annotation=annotation), self.assertRaisesRegex(AnnotationError, message):
+            with (
+                self.subTest(annotation=annotation),
+                self.assertRaisesRegex(AnnotationError, message),
+            ):
                 build_schema(unit((record,)))
 
     def test_rejects_flattening_an_array_record(self) -> None:
@@ -250,8 +261,9 @@ class SchemaTest(unittest.TestCase):
                 parse_annotations("@jsonStruct", LOCATION),
                 LOCATION,
             )
-            with self.subTest(annotation=annotation), self.assertRaisesRegex(
-                AnnotationError, message
+            with (
+                self.subTest(annotation=annotation),
+                self.assertRaisesRegex(AnnotationError, message),
             ):
                 build_schema(unit((root,)))
 
@@ -260,7 +272,9 @@ class SchemaTest(unittest.TestCase):
             "root",
             "Root",
             (
-                field("name", "char *", "@json(required, minlen=0, maxlen=8, omitempty)"),
+                field(
+                    "name", "char *", "@json(required, minlen=0, maxlen=8, omitempty)"
+                ),
                 field("score", "int", "@json(min=1, max=9)"),
             ),
             parse_annotations("@jsonStruct", LOCATION),

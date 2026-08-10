@@ -4,8 +4,9 @@ import argparse
 import os
 import sys
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence, TextIO
+from typing import TextIO
 
 from .c_generator import generate_c
 from .clang_frontend import ClangFrontend
@@ -20,9 +21,13 @@ def _parser() -> argparse.ArgumentParser:
         description="Generate C JSON decoder and cleanup functions from annotated C declarations.",
     )
     parser.add_argument("input", type=Path, help="annotated C header")
-    parser.add_argument("-o", "--output", required=True, type=Path, help="generated C source")
+    parser.add_argument(
+        "-o", "--output", required=True, type=Path, help="generated C source"
+    )
     parser.add_argument("--clang", default="clang", help="clang executable")
-    parser.add_argument("--include", dest="include", help="header spelling emitted in generated C")
+    parser.add_argument(
+        "--include", dest="include", help="header spelling emitted in generated C"
+    )
     parser.add_argument(
         "--dump-ir",
         choices=("schema", "plan", "all"),
@@ -33,7 +38,9 @@ def _parser() -> argparse.ArgumentParser:
 
 def _atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=path.name + ".", suffix=".tmp", dir=path.parent
+    )
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(content)

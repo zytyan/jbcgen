@@ -7,7 +7,6 @@ from pathlib import Path
 
 from annotation_parser.cli import run
 
-
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "runtime"
 

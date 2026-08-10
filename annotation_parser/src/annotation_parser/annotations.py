@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .diagnostics import AnnotationError, SourceLocation
-from .parser import CallExpression, KeyValueExpression, StringExpression, parse_annotation
+from .parser import (
+    CallExpression,
+    KeyValueExpression,
+    StringExpression,
+    parse_annotation,
+)
 
 
 @dataclass(frozen=True)
@@ -19,7 +24,9 @@ class Annotation:
     location: SourceLocation | None = None
 
     def values(self, name: str) -> tuple[str | None, ...]:
-        return tuple(argument.value for argument in self.arguments if argument.name == name)
+        return tuple(
+            argument.value for argument in self.arguments if argument.name == name
+        )
 
 
 def _calls_in_text(text: str) -> list[str]:
@@ -62,14 +69,18 @@ def _calls_in_text(text: str) -> list[str]:
                         break
                 cursor += 1
             if depth != 0:
-                raise SyntaxError(f"unterminated annotation starting at offset {marker}")
+                raise SyntaxError(
+                    f"unterminated annotation starting at offset {marker}"
+                )
             end = cursor
         calls.append(text[marker + 1 : end])
         index = end
     return calls
 
 
-def parse_annotations(text: str, location: SourceLocation | None = None) -> tuple[Annotation, ...]:
+def parse_annotations(
+    text: str, location: SourceLocation | None = None
+) -> tuple[Annotation, ...]:
     result: list[Annotation] = []
     for text_call in _calls_in_text(text):
         try:
@@ -86,7 +97,9 @@ def _convert(call: CallExpression, location: SourceLocation | None) -> Annotatio
     for expression in call.arguments:
         if isinstance(expression, StringExpression):
             argument = AnnotationArgument(expression.value, None)
-        elif isinstance(expression, KeyValueExpression) and isinstance(expression.value, StringExpression):
+        elif isinstance(expression, KeyValueExpression) and isinstance(
+            expression.value, StringExpression
+        ):
             argument = AnnotationArgument(expression.key.value, expression.value.value)
         else:
             raise AnnotationError(

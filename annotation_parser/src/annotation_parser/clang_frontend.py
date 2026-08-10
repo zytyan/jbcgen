@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .annotations import Annotation, parse_annotations
 from .diagnostics import FrontendError, SourceLocation
@@ -170,7 +171,9 @@ class CTypeParser:
             return AstType(
                 AstTypeKind.ARRAY,
                 c_type,
-                target=self._parse(element_text.strip(), None, resolving, element_text.strip()),
+                target=self._parse(
+                    element_text.strip(), None, resolving, element_text.strip()
+                ),
                 capacity=capacity,
             )
         if text.endswith("*"):
@@ -186,7 +189,9 @@ class CTypeParser:
             return AstType(AstTypeKind.BOOL, c_type, bits=8, signed=False, name=text)
         if text in _INTEGER_TYPES:
             bits, signed = _INTEGER_TYPES[text]
-            return AstType(AstTypeKind.INTEGER, c_type, bits=bits, signed=signed, name=text)
+            return AstType(
+                AstTypeKind.INTEGER, c_type, bits=bits, signed=signed, name=text
+            )
         if text in {"float", "double"}:
             return AstType(
                 AstTypeKind.FLOAT,
@@ -196,16 +201,22 @@ class CTypeParser:
                 name=text,
             )
         if text.startswith("struct "):
-            return AstType(AstTypeKind.RECORD, c_type, name=text.removeprefix("struct ").strip())
+            return AstType(
+                AstTypeKind.RECORD, c_type, name=text.removeprefix("struct ").strip()
+            )
         if text.startswith("enum "):
             name = text.removeprefix("enum ").strip()
             bits, signed = self.enum_types.get(name, (32, True))
-            return AstType(AstTypeKind.ENUM, c_type, bits=bits, signed=signed, name=name)
+            return AstType(
+                AstTypeKind.ENUM, c_type, bits=bits, signed=signed, name=name
+            )
         if text in self.record_names:
             return AstType(AstTypeKind.RECORD, c_type, name=text)
         if text in self.enum_types:
             bits, signed = self.enum_types[text]
-            return AstType(AstTypeKind.ENUM, c_type, bits=bits, signed=signed, name=text)
+            return AstType(
+                AstTypeKind.ENUM, c_type, bits=bits, signed=signed, name=text
+            )
         if text in self.typedefs and text not in resolving:
             alias_spelling, alias_desugared = self.typedefs[text]
             resolved = self._parse(
@@ -287,7 +298,9 @@ def _is_trailing_source_comment(node: dict[str, Any], source: str) -> bool:
     offset = int(offset)
     line_start = source.rfind("\n", 0, offset) + 1
     prefix = source[line_start:offset]
-    markers = [position for marker in ("///", "/**") if (position := prefix.rfind(marker)) >= 0]
+    markers = [
+        position for marker in ("///", "/**") if (position := prefix.rfind(marker)) >= 0
+    ]
     if not markers:
         return False
     return bool(prefix[: max(markers)].strip())
@@ -330,7 +343,9 @@ def _leading_source_comment(node: dict[str, Any], source: str) -> str:
     return ""
 
 
-def _belongs_to_default_source(node: dict[str, Any], default_file: Path, source: str) -> bool:
+def _belongs_to_default_source(
+    node: dict[str, Any], default_file: Path, source: str
+) -> bool:
     loc = node.get("loc", {})
     if loc.get("file") is not None:
         return Path(loc["file"]).resolve() == default_file.resolve()
@@ -344,7 +359,9 @@ def _belongs_to_default_source(node: dict[str, Any], default_file: Path, source:
     )
 
 
-def _node_annotations(node: dict[str, Any], default_file: Path, source: str) -> tuple[Annotation, ...]:
+def _node_annotations(
+    node: dict[str, Any], default_file: Path, source: str
+) -> tuple[Annotation, ...]:
     location = _location(node, default_file)
     belongs_to_default = _belongs_to_default_source(node, default_file, source)
     if belongs_to_default:
@@ -355,7 +372,9 @@ def _node_annotations(node: dict[str, Any], default_file: Path, source: str) -> 
                 return parsed
     annotations: list[Annotation] = []
     for child in node.get("inner", ()):
-        if child.get("kind") == "FullComment" and not _is_trailing_source_comment(child, source):
+        if child.get("kind") == "FullComment" and not _is_trailing_source_comment(
+            child, source
+        ):
             annotations.extend(parse_annotations(_comment_text(child), location))
 
     # Clang does not attach a documentation comment placed after a field.
@@ -378,7 +397,9 @@ class ClangFrontend:
     def __init__(self, clang: str = "clang"):
         self.clang = clang
 
-    def parse(self, input_file: Path, clang_args: Iterable[str] = ()) -> TranslationUnit:
+    def parse(
+        self, input_file: Path, clang_args: Iterable[str] = ()
+    ) -> TranslationUnit:
         input_file = input_file.resolve()
         source = input_file.read_text(encoding="utf-8")
         command = [
@@ -395,14 +416,18 @@ class ClangFrontend:
         ]
         process = subprocess.run(command, text=True, capture_output=True, check=False)
         if process.returncode != 0:
-            raise FrontendError(process.stderr.strip() or f"clang exited with {process.returncode}")
+            raise FrontendError(
+                process.stderr.strip() or f"clang exited with {process.returncode}"
+            )
         try:
             root = json.loads(process.stdout)
         except json.JSONDecodeError as error:
             raise FrontendError(f"clang produced invalid JSON AST: {error}") from error
         return self.from_json(root, input_file, source)
 
-    def from_json(self, root: dict[str, Any], input_file: Path, source: str) -> TranslationUnit:
+    def from_json(
+        self, root: dict[str, Any], input_file: Path, source: str
+    ) -> TranslationUnit:
         records: list[AstRecord] = []
         typedefs: list[AstTypedef] = []
         enums: list[AstEnum] = []
@@ -511,7 +536,8 @@ class ClangFrontend:
                         tuple(
                             child["name"]
                             for child in node.get("inner", ())
-                            if child.get("kind") == "EnumConstantDecl" and child.get("name")
+                            if child.get("kind") == "EnumConstantDecl"
+                            and child.get("name")
                         ),
                         _location(node, input_file),
                     )
@@ -537,7 +563,9 @@ class ClangFrontend:
                             )
                         )
                 function_type = node.get("type", {})
-                return_spelling = function_type.get("qualType", "").split("(", 1)[0].strip()
+                return_spelling = (
+                    function_type.get("qualType", "").split("(", 1)[0].strip()
+                )
                 return_desugared_text = function_type.get("desugaredQualType")
                 return_desugared = (
                     return_desugared_text.split("(", 1)[0].strip()
@@ -554,4 +582,6 @@ class ClangFrontend:
                         _location(node, input_file),
                     )
                 )
-        return TranslationUnit(input_file, tuple(records), tuple(typedefs), tuple(enums), tuple(functions))
+        return TranslationUnit(
+            input_file, tuple(records), tuple(typedefs), tuple(enums), tuple(functions)
+        )

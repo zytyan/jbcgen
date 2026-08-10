@@ -129,7 +129,8 @@ class CGenerator:
             field.minimum is not None or field.maximum is not None
             for field in schema_fields
         ) or any(
-            self.types[type_id].kind is TypeKind.FLOAT and self.types[type_id].bits == 32
+            self.types[type_id].kind is TypeKind.FLOAT
+            and self.types[type_id].bits == 32
             for type_id in used_types
         )
         needs_memory = bool(array_records) or any(
@@ -208,13 +209,27 @@ class CGenerator:
         plan = self.type_plans[record.id]
         if record.shape is RecordShape.ARRAY:
             return self._generate_array_release(record)
-        lines = [self._release_prototype(record), "{", "    if (out == NULL) {", "        return;", "    }"]
+        lines = [
+            self._release_prototype(record),
+            "{",
+            "    if (out == NULL) {",
+            "        return;",
+            "    }",
+        ]
         for index, field_id in enumerate(plan.owned_field_ids):
             field = self.fields[field_id]
             expression = self._field_expression((field.name,))
-            length_field = self.fields[field.length_field_id] if field.length_field_id else None
-            length = self._field_expression((length_field.name,)) if length_field else None
-            lines.extend(self._emit_release_value(field.type_id, expression, length, 1, f"r{index}"))
+            length_field = (
+                self.fields[field.length_field_id] if field.length_field_id else None
+            )
+            length = (
+                self._field_expression((length_field.name,)) if length_field else None
+            )
+            lines.extend(
+                self._emit_release_value(
+                    field.type_id, expression, length, 1, f"r{index}"
+                )
+            )
         lines.append("    memset(out, 0, sizeof(*out));")
         lines.append("}")
         return lines
@@ -235,10 +250,12 @@ class CGenerator:
         if self.types[layout.element_type_id].owns_resources:
             assert count_field_id is not None
             count = self._field_expression((self.fields[count_field_id].name,))
-            lines.extend([
-                f"    if ({elems} != NULL) {{",
-                f"        for (size_t r0 = 0; r0 < (size_t)({count}); ++r0) {{",
-            ])
+            lines.extend(
+                [
+                    f"    if ({elems} != NULL) {{",
+                    f"        for (size_t r0 = 0; r0 < (size_t)({count}); ++r0) {{",
+                ]
+            )
             lines.extend(
                 self._emit_release_value(
                     layout.element_type_id, f"({elems})[r0]", None, 3, "r0e"
@@ -246,13 +263,15 @@ class CGenerator:
             )
             lines.append("        }")
             lines.append("    }")
-        lines.extend([
-            f"    if ({elems} != NULL) {{",
-            f"        allocator->free({elems});",
-            "    }",
-            "    memset(out, 0, sizeof(*out));",
-            "}",
-        ])
+        lines.extend(
+            [
+                f"    if ({elems} != NULL) {{",
+                f"        allocator->free({elems});",
+                "    }",
+                "    memset(out, 0, sizeof(*out));",
+                "}",
+            ]
+        )
         return lines
 
     def _emit_release_value(
@@ -268,23 +287,41 @@ class CGenerator:
         pad = "    " * indent
         lines: list[str] = []
         if item.kind is TypeKind.STRING and item.capacity is None:
-            lines.extend([
-                f"{pad}if ({expression} != NULL) {{",
-                f"{pad}    {allocator}->free({expression});",
-                f"{pad}    {expression} = NULL;",
-                f"{pad}}}",
-            ])
+            lines.extend(
+                [
+                    f"{pad}if ({expression} != NULL) {{",
+                    f"{pad}    {allocator}->free({expression});",
+                    f"{pad}    {expression} = NULL;",
+                    f"{pad}}}",
+                ]
+            )
         elif item.kind is TypeKind.RECORD:
-            lines.append(f"{pad}{self._release_name(item.id)}({allocator}, &({expression}));")
+            lines.append(
+                f"{pad}{self._release_name(item.id)}({allocator}, &({expression}));"
+            )
         elif item.kind is TypeKind.POINTER and item.target is not None:
             lines.append(f"{pad}if ({expression} != NULL) {{")
-            lines.extend(self._emit_release_value(item.target, f"*({expression})", None, indent + 1, variable + "p", allocator))
-            lines.extend([
-                f"{pad}    {allocator}->free({expression});",
-                f"{pad}    {expression} = NULL;",
-                f"{pad}}}",
-            ])
-        elif item.kind in {TypeKind.DYNAMIC_ARRAY, TypeKind.FIXED_ARRAY} and item.target is not None:
+            lines.extend(
+                self._emit_release_value(
+                    item.target,
+                    f"*({expression})",
+                    None,
+                    indent + 1,
+                    variable + "p",
+                    allocator,
+                )
+            )
+            lines.extend(
+                [
+                    f"{pad}    {allocator}->free({expression});",
+                    f"{pad}    {expression} = NULL;",
+                    f"{pad}}}",
+                ]
+            )
+        elif (
+            item.kind in {TypeKind.DYNAMIC_ARRAY, TypeKind.FIXED_ARRAY}
+            and item.target is not None
+        ):
             if item.kind is TypeKind.DYNAMIC_ARRAY:
                 assert length_expression is not None
                 count = length_expression
@@ -292,18 +329,29 @@ class CGenerator:
                 count = length_expression
             else:
                 count = str(item.capacity or 0)
-            lines.append(f"{pad}for (size_t {variable} = 0; {variable} < (size_t)({count}); ++{variable}) {{")
+            lines.append(
+                f"{pad}for (size_t {variable} = 0; {variable} < (size_t)({count}); ++{variable}) {{"
+            )
             lines.extend(
-                self._emit_release_value(item.target, f"({expression})[{variable}]", None, indent + 1, variable + "e", allocator)
+                self._emit_release_value(
+                    item.target,
+                    f"({expression})[{variable}]",
+                    None,
+                    indent + 1,
+                    variable + "e",
+                    allocator,
+                )
             )
             lines.append(f"{pad}}}")
             if item.kind is TypeKind.DYNAMIC_ARRAY:
-                lines.extend([
-                    f"{pad}if ({expression} != NULL) {{",
-                    f"{pad}    {allocator}->free({expression});",
-                    f"{pad}    {expression} = NULL;",
-                    f"{pad}}}",
-                ])
+                lines.extend(
+                    [
+                        f"{pad}if ({expression} != NULL) {{",
+                        f"{pad}    {allocator}->free({expression});",
+                        f"{pad}    {expression} = NULL;",
+                        f"{pad}}}",
+                    ]
+                )
             if length_expression is not None:
                 lines.append(f"{pad}{length_expression} = 0;")
         return lines
@@ -319,87 +367,97 @@ class CGenerator:
             "{",
         ]
         if key_entries:
-            lines.extend([
-                "    static const json_key_entry key_entries[] = {",
-                *[
-                    f"        {{{{{_c_string(entry.key)}, {len(entry.key.encode('utf-8'))}}}, {entry.field_index}}},"
-                    for entry in key_entries
-                ],
-                "    };",
-                "    static const json_key_map key_map = {key_entries, sizeof(key_entries) / sizeof(key_entries[0])};",
-            ])
+            lines.extend(
+                [
+                    "    static const json_key_entry key_entries[] = {",
+                    *[
+                        f"        {{{{{_c_string(entry.key)}, {len(entry.key.encode('utf-8'))}}}, {entry.field_index}}},"
+                        for entry in key_entries
+                    ],
+                    "    };",
+                    "    static const json_key_map key_map = {key_entries, sizeof(key_entries) / sizeof(key_entries[0])};",
+                ]
+            )
         else:
             lines.append("    static const json_key_map key_map = {NULL, 0};")
-        lines.extend([
-            f"    unsigned char seen[{count}] = {{0}};",
-            "    json_source_location object_end_location = {0};",
-            "    if (!json_object_begin(parser)) {",
-            "        goto fail;",
-            "    }",
-            "    if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACE) {",
-            "        object_end_location = json_peek_token(parser)->location;",
-            "        if (!json_object_try_end(parser)) {",
-            "            goto fail;",
-            "        }",
-            "        goto object_done;",
-            "    }",
-            "    while (true) {",
-            "        json_source_location key_location = json_peek_token(parser)->location;",
-            "        json_cow_str key = {0};",
-            "        int field_index = -1;",
-            "        if (!json_decode_string(parser, &key)) {",
-            "            goto fail;",
-            "        }",
-            "        if (!json_consume_colon(parser)) {",
-            "            json_free_cow_str(parser->allocator, &key);",
-            "            goto fail;",
-            "        }",
-            "        json_slice key_slice = json_cow_str_as_slice(&key);",
-            "        uint32_t dispatched_id = 0;",
-            "        if (json_key_dispatch(&key_map, &key_slice, &dispatched_id)) {",
-            "            field_index = (int)dispatched_id;",
-            "        }",
-            "        json_free_cow_str(parser->allocator, &key);",
-            "        switch (field_index) {",
-        ])
+        lines.extend(
+            [
+                f"    unsigned char seen[{count}] = {{0}};",
+                "    json_source_location object_end_location = {0};",
+                "    if (!json_object_begin(parser)) {",
+                "        goto fail;",
+                "    }",
+                "    if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACE) {",
+                "        object_end_location = json_peek_token(parser)->location;",
+                "        if (!json_object_try_end(parser)) {",
+                "            goto fail;",
+                "        }",
+                "        goto object_done;",
+                "    }",
+                "    while (true) {",
+                "        json_source_location key_location = json_peek_token(parser)->location;",
+                "        json_cow_str key = {0};",
+                "        int field_index = -1;",
+                "        if (!json_decode_string(parser, &key)) {",
+                "            goto fail;",
+                "        }",
+                "        if (!json_consume_colon(parser)) {",
+                "            json_free_cow_str(parser->allocator, &key);",
+                "            goto fail;",
+                "        }",
+                "        json_slice key_slice = json_cow_str_as_slice(&key);",
+                "        uint32_t dispatched_id = 0;",
+                "        if (json_key_dispatch(&key_map, &key_slice, &dispatched_id)) {",
+                "            field_index = (int)dispatched_id;",
+                "        }",
+                "        json_free_cow_str(parser->allocator, &key);",
+                "        switch (field_index) {",
+            ]
+        )
         for field in plan.fields:
             lines.extend(self._generate_field_case(record, field))
-        lines.extend([
-            "        default:",
-            "            if (!json_skip_value(parser)) {",
-            "                goto fail;",
-            "            }",
-            "            break;",
-            "        }",
-            "        if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACE) {",
-            "            object_end_location = json_peek_token(parser)->location;",
-            "            if (!json_object_try_end(parser)) {",
-            "                goto fail;",
-            "            }",
-            "            break;",
-            "        }",
-            "        if (!json_consume_comma(parser)) {",
-            "            goto fail;",
-            "        }",
-            "    }",
-            "object_done:",
-        ])
+        lines.extend(
+            [
+                "        default:",
+                "            if (!json_skip_value(parser)) {",
+                "                goto fail;",
+                "            }",
+                "            break;",
+                "        }",
+                "        if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACE) {",
+                "            object_end_location = json_peek_token(parser)->location;",
+                "            if (!json_object_try_end(parser)) {",
+                "                goto fail;",
+                "            }",
+                "            break;",
+                "        }",
+                "        if (!json_consume_comma(parser)) {",
+                "            goto fail;",
+                "        }",
+                "    }",
+                "object_done:",
+            ]
+        )
         for field in plan.fields:
             schema_field = self.fields[field.field_id]
             if schema_field.required:
-                lines.extend([
-                    f"    if (!seen[{field.seen_index}]) {{",
-                    f"        jbc_set_context_error(parser, JSON_ERROR_OTHER_MISSING_REQUIRED_KEY, {_c_string(schema_field.key)}, object_end_location);",
-                    "        goto fail;",
-                    "    }",
-                ])
-        lines.extend([
-            "    return true;",
-            "fail:",
-            f"    {self._release_name(record.id)}(parser->allocator, out);",
-            "    return false;",
-            "}",
-        ])
+                lines.extend(
+                    [
+                        f"    if (!seen[{field.seen_index}]) {{",
+                        f"        jbc_set_context_error(parser, JSON_ERROR_OTHER_MISSING_REQUIRED_KEY, {_c_string(schema_field.key)}, object_end_location);",
+                        "        goto fail;",
+                        "    }",
+                    ]
+                )
+        lines.extend(
+            [
+                "    return true;",
+                "fail:",
+                f"    {self._release_name(record.id)}(parser->allocator, out);",
+                "    return false;",
+                "}",
+            ]
+        )
         return lines
 
     def _counter_limit(self, type_id: str | None) -> int | None:
@@ -435,11 +493,17 @@ class CGenerator:
         assert layout is not None
         target = self.types[layout.element_type_id]
         elems_field = self.fields[layout.elems_field_id]
-        length_field = self.fields[layout.length_field_id] if layout.length_field_id else None
-        capacity_field = self.fields[layout.capacity_field_id] if layout.capacity_field_id else None
+        length_field = (
+            self.fields[layout.length_field_id] if layout.length_field_id else None
+        )
+        capacity_field = (
+            self.fields[layout.capacity_field_id] if layout.capacity_field_id else None
+        )
         elems = self._field_expression((elems_field.name,))
         length = self._field_expression((length_field.name,)) if length_field else None
-        capacity = self._field_expression((capacity_field.name,)) if capacity_field else None
+        capacity = (
+            self._field_expression((capacity_field.name,)) if capacity_field else None
+        )
         length_type_id = length_field.type_id if length_field else None
         capacity_type_id = capacity_field.type_id if capacity_field else None
         lines = [
@@ -450,36 +514,45 @@ class CGenerator:
             f"    {elems} = NULL;",
         ]
         if self._counter_limit(capacity_type_id) is not None:
-            lines.insert(4, "    json_source_location array_location = json_peek_token(parser)->location;")
+            lines.insert(
+                4,
+                "    json_source_location array_location = json_peek_token(parser)->location;",
+            )
         if length is not None:
             lines.append(f"    {length} = 0;")
         if capacity is not None:
             lines.append(f"    {capacity} = 0;")
-        lines.extend([
-            "    if (!json_array_begin(parser)) {",
-            "        goto fail;",
-            "    }",
-            "    if (!json_array_try_end(parser)) {",
-            "        while (true) {",
-        ])
+        lines.extend(
+            [
+                "    if (!json_array_begin(parser)) {",
+                "        goto fail;",
+                "    }",
+                "    if (!json_array_try_end(parser)) {",
+                "        while (true) {",
+            ]
+        )
         # Reject before decoding the first element that cannot be represented by len.
         limit = self._counter_limit(length_type_id)
         if limit is not None:
-            lines.extend([
-                f"            if (array_count >= (size_t){limit}) {{",
-                f"                jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {limit}, json_peek_token(parser)->location);",
+            lines.extend(
+                [
+                    f"            if (array_count >= (size_t){limit}) {{",
+                    f"                jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {limit}, json_peek_token(parser)->location);",
+                    "                goto array_fail;",
+                    "            }",
+                ]
+            )
+        lines.extend(
+            [
+                f"            if (!json_any_vec_reserve(parser->allocator, &array_vec, sizeof({target.c_type}))) {{",
+                "                jbc_set_no_memory(parser);",
                 "                goto array_fail;",
                 "            }",
-            ])
-        lines.extend([
-            f"            if (!json_any_vec_reserve(parser->allocator, &array_vec, sizeof({target.c_type}))) {{",
-            "                jbc_set_no_memory(parser);",
-            "                goto array_fail;",
-            "            }",
-            f"            {target.c_type} *array_element = ({target.c_type} *)(array_vec.data + array_vec.byte_len);",
-            f"            array_vec.byte_len += sizeof({target.c_type});",
-            "            ++array_count;",
-        ])
+                f"            {target.c_type} *array_element = ({target.c_type} *)(array_vec.data + array_vec.byte_len);",
+                f"            array_vec.byte_len += sizeof({target.c_type});",
+                "            ++array_count;",
+            ]
+        )
         lines.extend(
             self._emit_decode_value(
                 layout.element_type_id,
@@ -491,22 +564,28 @@ class CGenerator:
                 "array_element",
             )
         )
-        lines.extend([
-            "            if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACKET) {",
-            "                if (!json_array_try_end(parser)) goto array_fail;",
-            "                break;",
-            "            }",
-            "            if (!json_consume_comma(parser)) goto array_fail;",
-            "        }",
-            "    }",
-        ])
+        lines.extend(
+            [
+                "            if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACKET) {",
+                "                if (!json_array_try_end(parser)) goto array_fail;",
+                "                break;",
+                "            }",
+                "            if (!json_consume_comma(parser)) goto array_fail;",
+                "        }",
+                "    }",
+            ]
+        )
         if capacity is not None:
             lines.append(
                 f"    size_t array_capacity = array_vec.byte_cap / sizeof({target.c_type});"
             )
             lines.extend(
                 self._emit_counter_check(
-                    "array_capacity", capacity_type_id, "array_location", "array_fail", 1
+                    "array_capacity",
+                    capacity_type_id,
+                    "array_location",
+                    "array_fail",
+                    1,
                 )
             )
         lines.append(f"    {elems} = ({target.c_type} *)array_vec.data;")
@@ -518,12 +597,14 @@ class CGenerator:
             assert capacity_field is not None
             field_type = capacity_field.c_type
             lines.append(f"    {capacity} = ({field_type})array_capacity;")
-        lines.extend([
-            "    array_vec.data = NULL;",
-            "    return true;",
-            "array_fail:",
-            "    for (size_t array_cleanup = 0; array_cleanup < array_count; ++array_cleanup) {",
-        ])
+        lines.extend(
+            [
+                "    array_vec.data = NULL;",
+                "    return true;",
+                "array_fail:",
+                "    for (size_t array_cleanup = 0; array_cleanup < array_count; ++array_cleanup) {",
+            ]
+        )
         lines.extend(
             self._emit_release_value(
                 layout.element_type_id,
@@ -534,21 +615,25 @@ class CGenerator:
                 "parser->allocator",
             )
         )
-        lines.extend([
-            "    }",
-            "    if (array_vec.data != NULL) parser->allocator->free(array_vec.data);",
-            "fail:",
-            f"    {self._release_name(record.id)}(parser->allocator, out);",
-            "    return false;",
-            "}",
-        ])
+        lines.extend(
+            [
+                "    }",
+                "    if (array_vec.data != NULL) parser->allocator->free(array_vec.data);",
+                "fail:",
+                f"    {self._release_name(record.id)}(parser->allocator, out);",
+                "    return false;",
+                "}",
+            ]
+        )
         return lines
 
     def _generate_field_case(self, record: RecordSchema, field: FieldPlan) -> list[str]:
         schema_field = self.fields[field.field_id]
         index = field.seen_index
         expression = self._field_expression(field.path)
-        length = self._field_expression(field.length_path) if field.length_path else None
+        length = (
+            self._field_expression(field.length_path) if field.length_path else None
+        )
         constraint = _Constraint(
             schema_field.minimum,
             schema_field.maximum,
@@ -556,20 +641,24 @@ class CGenerator:
             schema_field.max_length,
         )
         lines = [f"        case {index}: {{"]
-        lines.extend([
-            f"            if (seen[{index}]) {{",
-            f"                jbc_set_context_error(parser, JSON_ERROR_OTHER_DUPLICATE_KEY, {_c_string(schema_field.key)}, key_location);",
-            "                goto fail;",
-            "            }",
-            f"            seen[{index}] = 1;",
-        ])
-        if schema_field.required:
-            lines.extend([
-                "            if (json_peek_token(parser)->kind == JSON_TOKEN_NULL) {",
-                f"                jbc_set_context_error(parser, JSON_ERROR_OTHER_NULL_REQUIRED_VALUE, {_c_string(schema_field.key)}, json_peek_token(parser)->location);",
+        lines.extend(
+            [
+                f"            if (seen[{index}]) {{",
+                f"                jbc_set_context_error(parser, JSON_ERROR_OTHER_DUPLICATE_KEY, {_c_string(schema_field.key)}, key_location);",
                 "                goto fail;",
                 "            }",
-            ])
+                f"            seen[{index}] = 1;",
+            ]
+        )
+        if schema_field.required:
+            lines.extend(
+                [
+                    "            if (json_peek_token(parser)->kind == JSON_TOKEN_NULL) {",
+                    f"                jbc_set_context_error(parser, JSON_ERROR_OTHER_NULL_REQUIRED_VALUE, {_c_string(schema_field.key)}, json_peek_token(parser)->location);",
+                    "                goto fail;",
+                    "            }",
+                ]
+            )
         lines.extend(
             self._emit_decode_value(
                 schema_field.type_id,
@@ -602,48 +691,96 @@ class CGenerator:
         pad = "    " * indent
         lines: list[str] = []
         if item.kind is TypeKind.BOOL:
-            lines.append(f"{pad}if (!json_decode_bool(parser, &({expression}))) goto {fail_label};")
+            lines.append(
+                f"{pad}if (!json_decode_bool(parser, &({expression}))) goto {fail_label};"
+            )
         elif item.kind in {TypeKind.INTEGER, TypeKind.ENUM}:
             bits = item.bits or 32
             signed = bool(item.signed)
             function = f"json_decode_{'i' if signed else 'u'}{bits}"
-            needs_location = constraint.minimum is not None or constraint.maximum is not None
+            needs_location = (
+                constraint.minimum is not None or constraint.maximum is not None
+            )
             if item.kind is TypeKind.ENUM:
                 temp_type = f"{'int' if signed else 'uint'}{bits}_t"
                 lines.append(f"{pad}{temp_type} {variable}_number = 0;")
                 if needs_location:
-                    lines.append(f"{pad}json_source_location {variable}_location = json_peek_token(parser)->location;")
-                    lines.append(f"{pad}json_error_span {variable}_span = {{json_peek_token(parser)->str.ptr, json_peek_token(parser)->str.ptr + json_peek_token(parser)->str.len}};")
-                lines.append(f"{pad}if (!{function}(parser, &{variable}_number)) goto {fail_label};")
+                    lines.append(
+                        f"{pad}json_source_location {variable}_location = json_peek_token(parser)->location;"
+                    )
+                    lines.append(
+                        f"{pad}json_error_span {variable}_span = {{json_peek_token(parser)->str.ptr, json_peek_token(parser)->str.ptr + json_peek_token(parser)->str.len}};"
+                    )
+                lines.append(
+                    f"{pad}if (!{function}(parser, &{variable}_number)) goto {fail_label};"
+                )
                 lines.append(f"{pad}{expression} = ({item.c_type}){variable}_number;")
             else:
                 if needs_location:
-                    lines.append(f"{pad}json_source_location {variable}_location = json_peek_token(parser)->location;")
-                    lines.append(f"{pad}json_error_span {variable}_span = {{json_peek_token(parser)->str.ptr, json_peek_token(parser)->str.ptr + json_peek_token(parser)->str.len}};")
-                lines.append(f"{pad}if (!{function}(parser, &({expression}))) goto {fail_label};")
-            lines.extend(self._emit_number_constraints(expression, constraint, variable, fail_label, indent))
+                    lines.append(
+                        f"{pad}json_source_location {variable}_location = json_peek_token(parser)->location;"
+                    )
+                    lines.append(
+                        f"{pad}json_error_span {variable}_span = {{json_peek_token(parser)->str.ptr, json_peek_token(parser)->str.ptr + json_peek_token(parser)->str.len}};"
+                    )
+                lines.append(
+                    f"{pad}if (!{function}(parser, &({expression}))) goto {fail_label};"
+                )
+            lines.extend(
+                self._emit_number_constraints(
+                    expression, constraint, variable, fail_label, indent
+                )
+            )
         elif item.kind is TypeKind.FLOAT:
-            needs_location = item.bits == 32 or constraint.minimum is not None or constraint.maximum is not None
+            needs_location = (
+                item.bits == 32
+                or constraint.minimum is not None
+                or constraint.maximum is not None
+            )
             if needs_location:
-                lines.append(f"{pad}json_source_location {variable}_location = json_peek_token(parser)->location;")
-                lines.append(f"{pad}json_error_span {variable}_span = {{json_peek_token(parser)->str.ptr, json_peek_token(parser)->str.ptr + json_peek_token(parser)->str.len}};")
+                lines.append(
+                    f"{pad}json_source_location {variable}_location = json_peek_token(parser)->location;"
+                )
+                lines.append(
+                    f"{pad}json_error_span {variable}_span = {{json_peek_token(parser)->str.ptr, json_peek_token(parser)->str.ptr + json_peek_token(parser)->str.len}};"
+                )
             if item.bits == 32:
                 lines.append(f"{pad}double {variable}_number = 0.0;")
-                lines.append(f"{pad}if (!json_decode_f64(parser, &{variable}_number)) goto {fail_label};")
-                lines.append(f"{pad}if ({variable}_number < -FLT_MAX || {variable}_number > FLT_MAX) {{")
-                lines.append(f"{pad}    jbc_set_number_error(parser, {variable}_location, {variable}_span);")
+                lines.append(
+                    f"{pad}if (!json_decode_f64(parser, &{variable}_number)) goto {fail_label};"
+                )
+                lines.append(
+                    f"{pad}if ({variable}_number < -FLT_MAX || {variable}_number > FLT_MAX) {{"
+                )
+                lines.append(
+                    f"{pad}    jbc_set_number_error(parser, {variable}_location, {variable}_span);"
+                )
                 lines.append(f"{pad}    goto {fail_label};")
                 lines.append(f"{pad}}}")
                 lines.append(f"{pad}{expression} = (float){variable}_number;")
             else:
-                lines.append(f"{pad}if (!json_decode_f64(parser, &({expression}))) goto {fail_label};")
-            lines.extend(self._emit_number_constraints(expression, constraint, variable, fail_label, indent))
+                lines.append(
+                    f"{pad}if (!json_decode_f64(parser, &({expression}))) goto {fail_label};"
+                )
+            lines.extend(
+                self._emit_number_constraints(
+                    expression, constraint, variable, fail_label, indent
+                )
+            )
         elif item.kind is TypeKind.STRING:
-            lines.extend(self._emit_string(item, expression, constraint, fail_label, indent, variable))
+            lines.extend(
+                self._emit_string(
+                    item, expression, constraint, fail_label, indent, variable
+                )
+            )
         elif item.kind is TypeKind.RECORD:
-            lines.append(f"{pad}if (!{self._decode_name(item.id)}(parser, &({expression}))) goto {fail_label};")
+            lines.append(
+                f"{pad}if (!{self._decode_name(item.id)}(parser, &({expression}))) goto {fail_label};"
+            )
         elif item.kind is TypeKind.POINTER and item.target is not None:
-            lines.extend(self._emit_pointer(item, expression, fail_label, indent, variable))
+            lines.extend(
+                self._emit_pointer(item, expression, fail_label, indent, variable)
+            )
         elif item.kind is TypeKind.FIXED_ARRAY and item.target is not None:
             lines.extend(
                 self._emit_fixed_array(
@@ -698,67 +835,87 @@ class CGenerator:
             f"{pad}}}",
         ]
 
-    def _emit_string(self, item, expression, constraint, fail_label, indent, variable) -> list[str]:
+    def _emit_string(
+        self, item, expression, constraint, fail_label, indent, variable
+    ) -> list[str]:
         pad = "    " * indent
         lines: list[str] = []
         nullable = item.capacity is None
         if nullable:
-            lines.extend([
-                f"{pad}if (json_peek_token(parser)->kind == JSON_TOKEN_NULL) {{",
-                f"{pad}    if (!json_decode_null(parser)) goto {fail_label};",
-                f"{pad}}} else {{",
-            ])
+            lines.extend(
+                [
+                    f"{pad}if (json_peek_token(parser)->kind == JSON_TOKEN_NULL) {{",
+                    f"{pad}    if (!json_decode_null(parser)) goto {fail_label};",
+                    f"{pad}}} else {{",
+                ]
+            )
             body_indent = indent + 1
         else:
             body_indent = indent
         body = "    " * body_indent
-        lines.extend([
-            f"{body}json_source_location {variable}_location = json_peek_token(parser)->location;",
-            f"{body}json_cow_str {variable}_string = {{0}};",
-            f"{body}if (!json_decode_string(parser, &{variable}_string)) goto {fail_label};",
-            f"{body}json_slice {variable}_slice = json_cow_str_as_slice(&{variable}_string);",
-            f"{body}size_t {variable}_length = {variable}_slice.len;",
-            f"{body}if (memchr({variable}_slice.ptr, '\\0', {variable}_length) != NULL) {{",
-            f"{body}    json_free_cow_str(parser->allocator, &{variable}_string);",
-            f"{body}    json_set_error_at(parser, JSON_ERROR_OTHER_EMBEDDED_NUL, NULL, {variable}_location);",
-            f"{body}    goto {fail_label};",
-            f"{body}}}",
-        ])
+        lines.extend(
+            [
+                f"{body}json_source_location {variable}_location = json_peek_token(parser)->location;",
+                f"{body}json_cow_str {variable}_string = {{0}};",
+                f"{body}if (!json_decode_string(parser, &{variable}_string)) goto {fail_label};",
+                f"{body}json_slice {variable}_slice = json_cow_str_as_slice(&{variable}_string);",
+                f"{body}size_t {variable}_length = {variable}_slice.len;",
+                f"{body}if (memchr({variable}_slice.ptr, '\\0', {variable}_length) != NULL) {{",
+                f"{body}    json_free_cow_str(parser->allocator, &{variable}_string);",
+                f"{body}    json_set_error_at(parser, JSON_ERROR_OTHER_EMBEDDED_NUL, NULL, {variable}_location);",
+                f"{body}    goto {fail_label};",
+                f"{body}}}",
+            ]
+        )
         limits: list[tuple[str, int]] = []
         if constraint.min_length is not None:
-            limits.append((f"{variable}_length < {constraint.min_length}", constraint.min_length))
+            limits.append(
+                (f"{variable}_length < {constraint.min_length}", constraint.min_length)
+            )
         if constraint.max_length is not None:
-            limits.append((f"{variable}_length > {constraint.max_length}", constraint.max_length))
+            limits.append(
+                (f"{variable}_length > {constraint.max_length}", constraint.max_length)
+            )
         if item.capacity is not None:
-            limits.append((f"{variable}_length >= {item.capacity}", max(0, item.capacity - 1)))
+            limits.append(
+                (f"{variable}_length >= {item.capacity}", max(0, item.capacity - 1))
+            )
         for condition, limit in limits:
-            lines.extend([
-                f"{body}if ({condition}) {{",
-                f"{body}    json_free_cow_str(parser->allocator, &{variable}_string);",
-                f"{body}    jbc_set_length_error(parser, JSON_ERROR_RANGE_STRING_LENGTH, JSON_RANGE_STRING_LENGTH, {limit}, {variable}_location);",
-                f"{body}    goto {fail_label};",
-                f"{body}}}",
-            ])
+            lines.extend(
+                [
+                    f"{body}if ({condition}) {{",
+                    f"{body}    json_free_cow_str(parser->allocator, &{variable}_string);",
+                    f"{body}    jbc_set_length_error(parser, JSON_ERROR_RANGE_STRING_LENGTH, JSON_RANGE_STRING_LENGTH, {limit}, {variable}_location);",
+                    f"{body}    goto {fail_label};",
+                    f"{body}}}",
+                ]
+            )
         if item.capacity is None:
-            lines.extend([
-                f"{body}json_error_code {variable}_code = json_cow_str_into_owned_c_str(parser->allocator, &{variable}_string, &({expression}));",
-                f"{body}if ({variable}_code != JSON_ERROR_NONE) {{",
-                f"{body}    json_free_cow_str(parser->allocator, &{variable}_string);",
-                f"{body}    json_set_error_at(parser, {variable}_code, NULL, {variable}_location);",
-                f"{body}    goto {fail_label};",
-                f"{body}}}",
-            ])
+            lines.extend(
+                [
+                    f"{body}json_error_code {variable}_code = json_cow_str_into_owned_c_str(parser->allocator, &{variable}_string, &({expression}));",
+                    f"{body}if ({variable}_code != JSON_ERROR_NONE) {{",
+                    f"{body}    json_free_cow_str(parser->allocator, &{variable}_string);",
+                    f"{body}    json_set_error_at(parser, {variable}_code, NULL, {variable}_location);",
+                    f"{body}    goto {fail_label};",
+                    f"{body}}}",
+                ]
+            )
         else:
-            lines.extend([
-                f"{body}size_t {variable}_written = 0;",
-                f"{body}(void)json_slice_write_to_buf(&{variable}_slice, {expression}, {item.capacity}, &{variable}_written);",
-                f"{body}json_free_cow_str(parser->allocator, &{variable}_string);",
-            ])
+            lines.extend(
+                [
+                    f"{body}size_t {variable}_written = 0;",
+                    f"{body}(void)json_slice_write_to_buf(&{variable}_slice, {expression}, {item.capacity}, &{variable}_written);",
+                    f"{body}json_free_cow_str(parser->allocator, &{variable}_string);",
+                ]
+            )
         if nullable:
             lines.append(f"{pad}}}")
         return lines
 
-    def _emit_pointer(self, item, expression, fail_label, indent, variable) -> list[str]:
+    def _emit_pointer(
+        self, item, expression, fail_label, indent, variable
+    ) -> list[str]:
         pad = "    " * indent
         pointer_fail = f"{variable}_pointer_fail"
         pointer_done = f"{variable}_pointer_done"
@@ -780,52 +937,89 @@ class CGenerator:
                 if target_record.shape is RecordShape.ARRAY
                 else "JSON_EXPECTED_OBJECT"
             )
-            lines.extend([
-                f"{pad}    if (json_peek_token(parser)->kind != {token}) {{",
-                f"{pad}        json_error_detail {variable}_type_error = {{0}};",
-                f"{pad}        {variable}_type_error.type.expected = {expected};",
-                f"{pad}        {variable}_type_error.type.actual = json_peek_token(parser)->kind;",
-                f"{pad}        json_set_error(parser, JSON_ERROR_TYPE_MISMATCH, &{variable}_type_error);",
+            lines.extend(
+                [
+                    f"{pad}    if (json_peek_token(parser)->kind != {token}) {{",
+                    f"{pad}        json_error_detail {variable}_type_error = {{0}};",
+                    f"{pad}        {variable}_type_error.type.expected = {expected};",
+                    f"{pad}        {variable}_type_error.type.actual = json_peek_token(parser)->kind;",
+                    f"{pad}        json_set_error(parser, JSON_ERROR_TYPE_MISMATCH, &{variable}_type_error);",
+                    f"{pad}        goto {fail_label};",
+                    f"{pad}    }}",
+                ]
+            )
+        lines.extend(
+            [
+                f"{pad}    {expression} = ({target.c_type} *)parser->allocator->malloc(sizeof(*({expression})));",
+                f"{pad}    if ({expression} == NULL) {{",
+                f"{pad}        jbc_set_no_memory(parser);",
                 f"{pad}        goto {fail_label};",
                 f"{pad}    }}",
-            ])
-        lines.extend([
-            f"{pad}    {expression} = ({target.c_type} *)parser->allocator->malloc(sizeof(*({expression})));",
-            f"{pad}    if ({expression} == NULL) {{",
-            f"{pad}        jbc_set_no_memory(parser);",
-            f"{pad}        goto {fail_label};",
-            f"{pad}    }}",
-            f"{pad}    memset({expression}, 0, sizeof(*({expression})));",
-        ])
-        lines.extend(self._emit_decode_value(item.target, f"*({expression})", None, _Constraint(), pointer_fail, indent + 1, variable + "p"))
-        lines.extend([
-            f"{pad}    goto {pointer_done};",
-            f"{pointer_fail}:",
-        ])
-        lines.extend(self._emit_release_value(item.target, f"*({expression})", None, indent + 1, variable + "pr", "parser->allocator"))
-        lines.extend([
-            f"{pad}    parser->allocator->free({expression});",
-            f"{pad}    {expression} = NULL;",
-            f"{pad}    goto {fail_label};",
-            f"{pointer_done}: ;",
-            f"{pad}}}",
-        ])
+                f"{pad}    memset({expression}, 0, sizeof(*({expression})));",
+            ]
+        )
+        lines.extend(
+            self._emit_decode_value(
+                item.target,
+                f"*({expression})",
+                None,
+                _Constraint(),
+                pointer_fail,
+                indent + 1,
+                variable + "p",
+            )
+        )
+        lines.extend(
+            [
+                f"{pad}    goto {pointer_done};",
+                f"{pointer_fail}:",
+            ]
+        )
+        lines.extend(
+            self._emit_release_value(
+                item.target,
+                f"*({expression})",
+                None,
+                indent + 1,
+                variable + "pr",
+                "parser->allocator",
+            )
+        )
+        lines.extend(
+            [
+                f"{pad}    parser->allocator->free({expression});",
+                f"{pad}    {expression} = NULL;",
+                f"{pad}    goto {fail_label};",
+                f"{pointer_done}: ;",
+                f"{pad}}}",
+            ]
+        )
         return lines
 
     def _emit_array_length_checks(
-        self, count: str, constraint: _Constraint, fail_label: str, indent: int, variable: str
+        self,
+        count: str,
+        constraint: _Constraint,
+        fail_label: str,
+        indent: int,
+        variable: str,
     ) -> list[str]:
         pad = "    " * indent
         lines: list[str] = []
-        for operator, limit in (("<", constraint.min_length), (">", constraint.max_length)):
+        for operator, limit in (
+            ("<", constraint.min_length),
+            (">", constraint.max_length),
+        ):
             if limit is None:
                 continue
-            lines.extend([
-                f"{pad}if ({count} {operator} {limit}) {{",
-                f"{pad}    jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {limit}, {variable}_location);",
-                f"{pad}    goto {fail_label};",
-                f"{pad}}}",
-            ])
+            lines.extend(
+                [
+                    f"{pad}if ({count} {operator} {limit}) {{",
+                    f"{pad}    jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {limit}, {variable}_location);",
+                    f"{pad}    goto {fail_label};",
+                    f"{pad}}}",
+                ]
+            )
         return lines
 
     def _emit_fixed_array(
@@ -843,39 +1037,50 @@ class CGenerator:
         capacity = item.capacity or 0
         lines = [f"{pad}size_t {variable}_count = 0;"]
         if constraint.min_length is not None or constraint.max_length is not None:
-            lines.insert(0, f"{pad}json_source_location {variable}_location = json_peek_token(parser)->location;")
+            lines.insert(
+                0,
+                f"{pad}json_source_location {variable}_location = json_peek_token(parser)->location;",
+            )
         if length_expression:
             lines.append(f"{pad}{length_expression} = 0;")
-        lines.extend([
-            f"{pad}if (!json_array_begin(parser)) goto {fail_label};",
-            f"{pad}if (!json_array_try_end(parser)) {{",
-            f"{pad}while (true) {{",
-            f"{pad}    if ({variable}_count >= {capacity}) {{",
-            f"{pad}        jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {capacity}, json_peek_token(parser)->location);",
-            f"{pad}        goto {fail_label};",
-            f"{pad}    }}",
-        ])
-        if constraint.max_length is not None and constraint.max_length < capacity:
-            lines.extend([
-                f"{pad}    if ({variable}_count >= {constraint.max_length}) {{",
-                f"{pad}        jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {constraint.max_length}, json_peek_token(parser)->location);",
+        lines.extend(
+            [
+                f"{pad}if (!json_array_begin(parser)) goto {fail_label};",
+                f"{pad}if (!json_array_try_end(parser)) {{",
+                f"{pad}while (true) {{",
+                f"{pad}    if ({variable}_count >= {capacity}) {{",
+                f"{pad}        jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {capacity}, json_peek_token(parser)->location);",
                 f"{pad}        goto {fail_label};",
                 f"{pad}    }}",
-            ])
+            ]
+        )
+        if constraint.max_length is not None and constraint.max_length < capacity:
+            lines.extend(
+                [
+                    f"{pad}    if ({variable}_count >= {constraint.max_length}) {{",
+                    f"{pad}        jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {constraint.max_length}, json_peek_token(parser)->location);",
+                    f"{pad}        goto {fail_label};",
+                    f"{pad}    }}",
+                ]
+            )
         length_limit = self._counter_limit(length_type_id)
         if length_limit is not None:
-            lines.extend([
-                f"{pad}    if ({variable}_count >= (size_t){length_limit}) {{",
-                f"{pad}        jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {length_limit}, json_peek_token(parser)->location);",
-                f"{pad}        goto {fail_label};",
-                f"{pad}    }}",
-            ])
+            lines.extend(
+                [
+                    f"{pad}    if ({variable}_count >= (size_t){length_limit}) {{",
+                    f"{pad}        jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {length_limit}, json_peek_token(parser)->location);",
+                    f"{pad}        goto {fail_label};",
+                    f"{pad}    }}",
+                ]
+            )
         if length_expression:
             # Include the zero-initialized current slot in rollback if element decoding fails.
-            lines.extend([
-                f"{pad}    ++{variable}_count;",
-                f"{pad}    {length_expression} = {variable}_count;",
-            ])
+            lines.extend(
+                [
+                    f"{pad}    ++{variable}_count;",
+                    f"{pad}    {length_expression} = {variable}_count;",
+                ]
+            )
         lines.extend(
             self._emit_decode_value(
                 item.target,
@@ -893,16 +1098,22 @@ class CGenerator:
         )
         if not length_expression:
             lines.append(f"{pad}    ++{variable}_count;")
-        lines.extend([
-            f"{pad}    if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACKET) {{",
-            f"{pad}        if (!json_array_try_end(parser)) goto {fail_label};",
-            f"{pad}        break;",
-            f"{pad}    }}",
-            f"{pad}    if (!json_consume_comma(parser)) goto {fail_label};",
-            f"{pad}}}",
-            f"{pad}}}",
-        ])
-        lines.extend(self._emit_array_length_checks(f"{variable}_count", constraint, fail_label, indent, variable))
+        lines.extend(
+            [
+                f"{pad}    if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACKET) {{",
+                f"{pad}        if (!json_array_try_end(parser)) goto {fail_label};",
+                f"{pad}        break;",
+                f"{pad}    }}",
+                f"{pad}    if (!json_consume_comma(parser)) goto {fail_label};",
+                f"{pad}}}",
+                f"{pad}}}",
+            ]
+        )
+        lines.extend(
+            self._emit_array_length_checks(
+                f"{variable}_count", constraint, fail_label, indent, variable
+            )
+        )
         return lines
 
     def _emit_dynamic_array(
@@ -933,52 +1144,77 @@ class CGenerator:
             f"{pad}    while (true) {{",
         ]
         if constraint.min_length is not None or constraint.max_length is not None:
-            lines.insert(6, f"{pad}    json_source_location {variable}_location = json_peek_token(parser)->location;")
+            lines.insert(
+                6,
+                f"{pad}    json_source_location {variable}_location = json_peek_token(parser)->location;",
+            )
         if constraint.max_length is not None:
-            lines.extend([
-                f"{pad}        if ({variable}_count >= {constraint.max_length}) {{",
-                f"{pad}            jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {constraint.max_length}, json_peek_token(parser)->location);",
-                f"{pad}            goto {array_fail};",
-                f"{pad}        }}",
-            ])
+            lines.extend(
+                [
+                    f"{pad}        if ({variable}_count >= {constraint.max_length}) {{",
+                    f"{pad}            jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {constraint.max_length}, json_peek_token(parser)->location);",
+                    f"{pad}            goto {array_fail};",
+                    f"{pad}        }}",
+                ]
+            )
         length_limit = self._counter_limit(length_type_id)
         if length_limit is not None:
-            lines.extend([
-                f"{pad}        if ({variable}_count >= (size_t){length_limit}) {{",
-                f"{pad}            jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {length_limit}, json_peek_token(parser)->location);",
+            lines.extend(
+                [
+                    f"{pad}        if ({variable}_count >= (size_t){length_limit}) {{",
+                    f"{pad}            jbc_set_length_error(parser, JSON_ERROR_RANGE_ARRAY_LENGTH, JSON_RANGE_ARRAY_LENGTH, {length_limit}, json_peek_token(parser)->location);",
+                    f"{pad}            goto {array_fail};",
+                    f"{pad}        }}",
+                ]
+            )
+        lines.extend(
+            [
+                f"{pad}        if (!json_any_vec_reserve(parser->allocator, &{variable}_vec, sizeof({target.c_type}))) {{",
+                f"{pad}            jbc_set_no_memory(parser);",
                 f"{pad}            goto {array_fail};",
                 f"{pad}        }}",
-            ])
-        lines.extend([
-            f"{pad}        if (!json_any_vec_reserve(parser->allocator, &{variable}_vec, sizeof({target.c_type}))) {{",
-            f"{pad}            jbc_set_no_memory(parser);",
-            f"{pad}            goto {array_fail};",
-            f"{pad}        }}",
-            f"{pad}        {target.c_type} *{variable}_element = ({target.c_type} *)({variable}_vec.data + {variable}_vec.byte_len);",
-            f"{pad}        {variable}_vec.byte_len += sizeof({target.c_type});",
-            f"{pad}        ++{variable}_count;",
-        ])
-        lines.extend(
-            self._emit_decode_value(item.target, f"*{variable}_element", None, _Constraint(), array_fail, indent + 2, variable + "e")
+                f"{pad}        {target.c_type} *{variable}_element = ({target.c_type} *)({variable}_vec.data + {variable}_vec.byte_len);",
+                f"{pad}        {variable}_vec.byte_len += sizeof({target.c_type});",
+                f"{pad}        ++{variable}_count;",
+            ]
         )
-        lines.extend([
-            f"{pad}        if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACKET) {{",
-            f"{pad}            if (!json_array_try_end(parser)) goto {array_fail};",
-            f"{pad}            break;",
-            f"{pad}        }}",
-            f"{pad}        if (!json_consume_comma(parser)) goto {array_fail};",
-            f"{pad}    }}",
-            f"{pad}    }}",
-        ])
-        lines.extend(self._emit_array_length_checks(f"{variable}_count", constraint, array_fail, indent + 1, variable))
-        lines.extend([
-            f"{pad}    {expression} = ({target.c_type} *){variable}_vec.data;",
-            f"{pad}    {length_expression} = {variable}_count;",
-            f"{pad}    {variable}_vec.data = NULL;",
-            f"{pad}    goto {array_done};",
-            f"{array_fail}:",
-            f"{pad}    for (size_t {variable}_cleanup = 0; {variable}_cleanup < {variable}_count; ++{variable}_cleanup) {{",
-        ])
+        lines.extend(
+            self._emit_decode_value(
+                item.target,
+                f"*{variable}_element",
+                None,
+                _Constraint(),
+                array_fail,
+                indent + 2,
+                variable + "e",
+            )
+        )
+        lines.extend(
+            [
+                f"{pad}        if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACKET) {{",
+                f"{pad}            if (!json_array_try_end(parser)) goto {array_fail};",
+                f"{pad}            break;",
+                f"{pad}        }}",
+                f"{pad}        if (!json_consume_comma(parser)) goto {array_fail};",
+                f"{pad}    }}",
+                f"{pad}    }}",
+            ]
+        )
+        lines.extend(
+            self._emit_array_length_checks(
+                f"{variable}_count", constraint, array_fail, indent + 1, variable
+            )
+        )
+        lines.extend(
+            [
+                f"{pad}    {expression} = ({target.c_type} *){variable}_vec.data;",
+                f"{pad}    {length_expression} = {variable}_count;",
+                f"{pad}    {variable}_vec.data = NULL;",
+                f"{pad}    goto {array_done};",
+                f"{array_fail}:",
+                f"{pad}    for (size_t {variable}_cleanup = 0; {variable}_cleanup < {variable}_count; ++{variable}_cleanup) {{",
+            ]
+        )
         lines.extend(
             self._emit_release_value(
                 item.target,
@@ -989,13 +1225,15 @@ class CGenerator:
                 "parser->allocator",
             )
         )
-        lines.extend([
-            f"{pad}    }}",
-            f"{pad}    if ({variable}_vec.data != NULL) parser->allocator->free({variable}_vec.data);",
-            f"{pad}    goto {fail_label};",
-            f"{array_done}: ;",
-            f"{pad}}}",
-        ])
+        lines.extend(
+            [
+                f"{pad}    }}",
+                f"{pad}    if ({variable}_vec.data != NULL) parser->allocator->free({variable}_vec.data);",
+                f"{pad}    goto {fail_label};",
+                f"{array_done}: ;",
+                f"{pad}}}",
+            ]
+        )
         return lines
 
     def _generate_public_functions(self) -> list[str]:
@@ -1004,30 +1242,34 @@ class CGenerator:
             if function.role != "jsonDecode":
                 continue
             output_type = function.parameter_c_types[1].strip()
-            lines.extend([
-                f"bool {function.name}(json_parser *parser, {output_type} out)",
-                "{",
-                "    if (parser == NULL || out == NULL) {",
-                "        if (parser != NULL) json_set_error(parser, JSON_ERROR_OTHER_INVALID_STATE, NULL);",
-                "        return false;",
-                "    }",
-                "    memset(out, 0, sizeof(*out));",
-                f"    return {self._decode_name(function.record_id)}(parser, out);",
-                "}",
-                "",
-            ])
+            lines.extend(
+                [
+                    f"bool {function.name}(json_parser *parser, {output_type} out)",
+                    "{",
+                    "    if (parser == NULL || out == NULL) {",
+                    "        if (parser != NULL) json_set_error(parser, JSON_ERROR_OTHER_INVALID_STATE, NULL);",
+                    "        return false;",
+                    "    }",
+                    "    memset(out, 0, sizeof(*out));",
+                    f"    return {self._decode_name(function.record_id)}(parser, out);",
+                    "}",
+                    "",
+                ]
+            )
         for function in self.schema.functions:
             if function.role != "jsonCleanup":
                 continue
             output_type = function.parameter_c_types[1].strip()
-            lines.extend([
-                f"void {function.name}(json_allocator *allocator, {output_type} out)",
-                "{",
-                "    if (allocator == NULL || out == NULL) return;",
-                f"    {self._release_name(function.record_id)}(allocator, out);",
-                "}",
-                "",
-            ])
+            lines.extend(
+                [
+                    f"void {function.name}(json_allocator *allocator, {output_type} out)",
+                    "{",
+                    "    if (allocator == NULL || out == NULL) return;",
+                    f"    {self._release_name(function.record_id)}(allocator, out);",
+                    "}",
+                    "",
+                ]
+            )
         return lines
 
 

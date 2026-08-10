@@ -10,7 +10,6 @@ from annotation_parser.clang_frontend import ClangFrontend
 from annotation_parser.generate_plan import build_generate_plan
 from annotation_parser.schema import build_schema
 
-
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "runtime"
 
@@ -80,16 +79,31 @@ class CGeneratorTest(unittest.TestCase):
             self.assertIn("jbc_release_Root", source)
             self.assertIn("json_key_dispatch(&key_map", source)
             self.assertIn('{{"identifier", 10}, 0}', source)
-            self.assertLess(source.index('{{"id", 2}, 0}'), source.index('{{"kind", 4}, 5}'))
-            self.assertLess(source.index('{{"kind", 4}, 5}'), source.index('{{"name", 4}, 1}'))
-            self.assertLess(source.index('{{"name", 4}, 1}'), source.index('{{"children", 8}, 2}'))
-            self.assertLess(source.index('{{"children", 8}, 2}'), source.index('{{"identifier", 10}, 0}'))
+            self.assertLess(
+                source.index('{{"id", 2}, 0}'), source.index('{{"kind", 4}, 5}')
+            )
+            self.assertLess(
+                source.index('{{"kind", 4}, 5}'), source.index('{{"name", 4}, 1}')
+            )
+            self.assertLess(
+                source.index('{{"name", 4}, 1}'), source.index('{{"children", 8}, 2}')
+            )
+            self.assertLess(
+                source.index('{{"children", 8}, 2}'),
+                source.index('{{"identifier", 10}, 0}'),
+            )
             self.assertIn("JSON_ERROR_OTHER_MISSING_REQUIRED_KEY", source)
-            pointer_check = source.index("JSON_TOKEN_LBRACE", source.index("out->optional"))
-            pointer_allocation = source.index("parser->allocator->malloc", pointer_check)
+            pointer_check = source.index(
+                "JSON_TOKEN_LBRACE", source.index("out->optional")
+            )
+            pointer_allocation = source.index(
+                "parser->allocator->malloc", pointer_check
+            )
             self.assertLess(pointer_check, pointer_allocation)
             reserve = source.index("json_any_vec_reserve")
-            empty_check = source.index("if (!json_array_try_end", source.index("jbc_decode_Root"))
+            empty_check = source.index(
+                "if (!json_array_try_end", source.index("jbc_decode_Root")
+            )
             self.assertGreater(reserve, empty_check)
 
     def test_array_record_and_anonymous_typedef_compile_as_c11(self) -> None:

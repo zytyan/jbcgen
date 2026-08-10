@@ -161,17 +161,21 @@ _ANNOTATIONS: dict[str, dict[str, _ArgumentSpec]] = {
 def _validate_annotation(annotation: Annotation) -> None:
     arguments = _ANNOTATIONS.get(annotation.name)
     if arguments is None:
-        raise AnnotationError(f"unknown annotation @{annotation.name}", annotation.location)
+        raise AnnotationError(
+            f"unknown annotation @{annotation.name}", annotation.location
+        )
     seen: set[str] = set()
     for argument in annotation.arguments:
         spec = arguments.get(argument.name)
         if spec is None:
             raise AnnotationError(
-                f"unknown @{annotation.name} argument {argument.name!r}", annotation.location
+                f"unknown @{annotation.name} argument {argument.name!r}",
+                annotation.location,
             )
         if spec.mode is _ArgumentMode.FLAG and argument.value is not None:
             raise AnnotationError(
-                f"@{annotation.name} argument {argument.name!r} is a flag", annotation.location
+                f"@{annotation.name} argument {argument.name!r} is a flag",
+                annotation.location,
             )
         if spec.mode is _ArgumentMode.VALUE and argument.value is None:
             raise AnnotationError(
@@ -180,7 +184,8 @@ def _validate_annotation(annotation: Annotation) -> None:
             )
         if argument.name in seen and not spec.repeatable:
             raise AnnotationError(
-                f"duplicate @{annotation.name} argument {argument.name!r}", annotation.location
+                f"duplicate @{annotation.name} argument {argument.name!r}",
+                annotation.location,
             )
         seen.add(argument.name)
 
@@ -190,7 +195,9 @@ def _find_annotation(
 ) -> Annotation | None:
     matches = tuple(item for item in annotations if item.name == name)
     if len(matches) > 1:
-        raise AnnotationError(f"a declaration may contain only one @{name} annotation", location)
+        raise AnnotationError(
+            f"a declaration may contain only one @{name} annotation", location
+        )
     return matches[0] if matches else None
 
 
@@ -255,7 +262,10 @@ class SchemaBuilder:
         known = set(self.ast_records)
         for function in self.unit.functions:
             for role in ("jsonDecode", "jsonCleanup"):
-                if _find_annotation(function.annotations, role, function.location) is None:
+                if (
+                    _find_annotation(function.annotations, role, function.location)
+                    is None
+                ):
                     continue
                 record_name = None
                 if len(function.parameters) >= 2:
@@ -317,7 +327,9 @@ class SchemaBuilder:
                         "array record elems field must be a non-void pointer",
                         elems.location,
                     )
-            fields = tuple(self._build_field(record_id, item) for item in ast_record.fields)
+            fields = tuple(
+                self._build_field(record_id, item) for item in ast_record.fields
+            )
             self.records[record_id] = RecordSchema(
                 record_id,
                 name,
@@ -352,16 +364,29 @@ class SchemaBuilder:
                     try:
                         Decimal(value)
                     except InvalidOperation as error:
-                        raise AnnotationError("min/max must be numeric", field.location) from error
+                        raise AnnotationError(
+                            "min/max must be numeric", field.location
+                        ) from error
         min_length = self._length(annotation, "minlen", field)
         max_length = self._length(annotation, "maxlen", field)
-        if min_length is not None or max_length is not None:
-            if item.kind not in {TypeKind.STRING, TypeKind.FIXED_ARRAY, TypeKind.DYNAMIC_ARRAY}:
-                raise AnnotationError("minlen/maxlen require a string or array", field.location)
-        if min_length is not None and max_length is not None and min_length > max_length:
+        if (min_length is not None or max_length is not None) and item.kind not in {
+            TypeKind.STRING,
+            TypeKind.FIXED_ARRAY,
+            TypeKind.DYNAMIC_ARRAY,
+        }:
+            raise AnnotationError(
+                "minlen/maxlen require a string or array", field.location
+            )
+        if (
+            min_length is not None
+            and max_length is not None
+            and min_length > max_length
+        ):
             raise AnnotationError("minlen cannot exceed maxlen", field.location)
         altkeys = tuple(
-            value for value in (annotation.values("altkey") if annotation else ()) if value is not None
+            value
+            for value in (annotation.values("altkey") if annotation else ())
+            if value is not None
         )
         explicit_key = _argument(annotation, "key") is not None
         return FieldSchema(
@@ -384,27 +409,41 @@ class SchemaBuilder:
             omitempty=_flag(annotation, "omitempty"),
         )
 
-    def _length(self, annotation: Annotation | None, name: str, field: AstField) -> int | None:
+    def _length(
+        self, annotation: Annotation | None, name: str, field: AstField
+    ) -> int | None:
         value = _argument(annotation, name)
         if value is None:
             return None
         try:
             result = int(value, 10)
         except ValueError as error:
-            raise AnnotationError(f"{name} must be a non-negative integer", field.location) from error
+            raise AnnotationError(
+                f"{name} must be a non-negative integer", field.location
+            ) from error
         if result < 0:
-            raise AnnotationError(f"{name} must be a non-negative integer", field.location)
+            raise AnnotationError(
+                f"{name} must be a non-negative integer", field.location
+            )
         return result
 
     def _intern_type(self, item: AstType, dynamic: bool = False) -> str:
         if dynamic:
-            if item.kind is not AstTypeKind.POINTER or item.target is None or (
-                item.target.kind is AstTypeKind.INTEGER and item.target.name == "char"
+            if (
+                item.kind is not AstTypeKind.POINTER
+                or item.target is None
+                or (
+                    item.target.kind is AstTypeKind.INTEGER
+                    and item.target.name == "char"
+                )
             ):
                 raise AnnotationError("type=array requires a non-string pointer field")
             target = self._intern_type(item.target)
             value = TypeSchema(
-                f"dynamic-array:{target}", TypeKind.DYNAMIC_ARRAY, item.c_type, target=target
+                f"dynamic-array:{target}",
+                TypeKind.DYNAMIC_ARRAY,
+                item.c_type,
+                target=target,
             )
         elif item.kind is AstTypeKind.BOOL:
             value = TypeSchema("bool", TypeKind.BOOL, item.c_type, 8, False)
@@ -423,23 +462,33 @@ class SchemaBuilder:
             value = TypeSchema(f"float:{bits}", TypeKind.FLOAT, item.c_type, bits, True)
         elif item.kind is AstTypeKind.ENUM:
             value = TypeSchema(
-                f"enum:{item.name}", TypeKind.ENUM, item.c_type, item.bits or 32, bool(item.signed)
+                f"enum:{item.name}",
+                TypeKind.ENUM,
+                item.c_type,
+                item.bits or 32,
+                bool(item.signed),
             )
         elif item.kind is AstTypeKind.RECORD and item.name is not None:
             record = self.ast_records.get(item.name)
             c_type = record.c_type if record and record.c_type else item.c_type
             value = TypeSchema(f"record:{item.name}", TypeKind.RECORD, c_type)
-        elif item.kind in {AstTypeKind.POINTER, AstTypeKind.ARRAY} and item.target is not None:
-            is_char = (
-                item.target.kind is AstTypeKind.INTEGER
-                and item.target.name in {"char", "signed char", "unsigned char"}
-            )
+        elif (
+            item.kind in {AstTypeKind.POINTER, AstTypeKind.ARRAY}
+            and item.target is not None
+        ):
+            is_char = item.target.kind is AstTypeKind.INTEGER and item.target.name in {
+                "char",
+                "signed char",
+                "unsigned char",
+            }
             if is_char:
                 if item.kind is AstTypeKind.POINTER:
                     value = TypeSchema("string:pointer", TypeKind.STRING, item.c_type)
                 else:
                     if item.capacity is None or item.capacity <= 0:
-                        raise AnnotationError("zero-length and flexible C arrays are not supported")
+                        raise AnnotationError(
+                            "zero-length and flexible C arrays are not supported"
+                        )
                     value = TypeSchema(
                         f"string:fixed:{item.capacity}",
                         TypeKind.STRING,
@@ -450,11 +499,16 @@ class SchemaBuilder:
                 target = self._intern_type(item.target)
                 if item.kind is AstTypeKind.POINTER:
                     value = TypeSchema(
-                        f"pointer:{target}", TypeKind.POINTER, item.c_type, target=target
+                        f"pointer:{target}",
+                        TypeKind.POINTER,
+                        item.c_type,
+                        target=target,
                     )
                 else:
                     if item.capacity is None or item.capacity <= 0:
-                        raise AnnotationError("zero-length and flexible C arrays are not supported")
+                        raise AnnotationError(
+                            "zero-length and flexible C arrays are not supported"
+                        )
                     value = TypeSchema(
                         f"fixed-array:{item.capacity}:{target}",
                         TypeKind.FIXED_ARRAY,
@@ -475,15 +529,27 @@ class SchemaBuilder:
             updated = dict(fields)
             for name, field in fields.items():
                 ast_field = ast_fields[name]
-                annotation = _find_annotation(ast_field.annotations, "json", ast_field.location)
+                annotation = _find_annotation(
+                    ast_field.annotations, "json", ast_field.location
+                )
                 kind = _argument(annotation, "type")
                 length_name = _argument(annotation, "len")
                 if kind is not None and kind != "array":
-                    raise AnnotationError("the only supported @json type is 'array'", field.location)
+                    raise AnnotationError(
+                        "the only supported @json type is 'array'", field.location
+                    )
                 if kind == "array" and length_name is None:
-                    raise AnnotationError("a dynamic array requires len=<field>", field.location)
-                if kind != "array" and length_name is not None and self.types[field.type_id].kind is not TypeKind.FIXED_ARRAY:
-                    raise AnnotationError("len is only valid for fixed or dynamic arrays", field.location)
+                    raise AnnotationError(
+                        "a dynamic array requires len=<field>", field.location
+                    )
+                if (
+                    kind != "array"
+                    and length_name is not None
+                    and self.types[field.type_id].kind is not TypeKind.FIXED_ARRAY
+                ):
+                    raise AnnotationError(
+                        "len is only valid for fixed or dynamic arrays", field.location
+                    )
                 if length_name is not None:
                     length = fields.get(length_name)
                     if length is None:
@@ -496,9 +562,14 @@ class SchemaBuilder:
             record_annotation = _find_annotation(
                 ast_record.annotations, "jsonStruct", ast_record.location
             )
-            if record_annotation and record_annotation.arguments and not _flag(record_annotation, "asarray"):
+            if (
+                record_annotation
+                and record_annotation.arguments
+                and not _flag(record_annotation, "asarray")
+            ):
                 raise AnnotationError(
-                    "parameterized @jsonStruct requires the asarray flag", ast_record.location
+                    "parameterized @jsonStruct requires the asarray flag",
+                    ast_record.location,
                 )
             layout = None
             shape = RecordShape.OBJECT
@@ -516,28 +587,39 @@ class SchemaBuilder:
                 shape=shape,
                 array=layout,
             )
+
     def _array_record_layout(
         self, ast_record: AstRecord, fields: tuple[FieldSchema, ...]
     ) -> ArrayLayout:
-        annotation = _find_annotation(ast_record.annotations, "jsonStruct", ast_record.location)
+        annotation = _find_annotation(
+            ast_record.annotations, "jsonStruct", ast_record.location
+        )
         elems_name = _argument(annotation, "elems")
         if elems_name is None:
-            raise AnnotationError("@jsonStruct(asarray) requires elems=<field>", ast_record.location)
+            raise AnnotationError(
+                "@jsonStruct(asarray) requires elems=<field>", ast_record.location
+            )
         names = {item.name: item for item in fields}
         length_name = _argument(annotation, "len")
         capacity_name = _argument(annotation, "cap")
         references = [item for item in (elems_name, length_name, capacity_name) if item]
         if len(references) != len(set(references)):
             raise AnnotationError(
-                "array record elems, len, and cap fields must be distinct", ast_record.location
+                "array record elems, len, and cap fields must be distinct",
+                ast_record.location,
             )
         for name in references:
             if name not in names:
-                raise AnnotationError(f"array record references missing field {name!r}", ast_record.location)
+                raise AnnotationError(
+                    f"array record references missing field {name!r}",
+                    ast_record.location,
+                )
         elems = names[elems_name]
         elems_type = self.types[elems.type_id]
         if elems_type.kind is not TypeKind.POINTER or elems_type.target is None:
-            raise AnnotationError("array record elems field must be a non-void pointer", elems.location)
+            raise AnnotationError(
+                "array record elems field must be a non-void pointer", elems.location
+            )
         length = names.get(length_name) if length_name else None
         capacity = names.get(capacity_name) if capacity_name else None
         if length:
@@ -556,11 +638,15 @@ class SchemaBuilder:
     def _validate_count_field(self, field: FieldSchema, role: str) -> None:
         item = self.types[field.type_id]
         if item.kind is not TypeKind.INTEGER or item.signed:
-            raise AnnotationError(f"{role} field must be an unsigned integer", field.location)
+            raise AnnotationError(
+                f"{role} field must be an unsigned integer", field.location
+            )
 
     def _validate_bindings(self) -> None:
         records = self.records
-        fields = {field.id: field for record in records.values() for field in record.fields}
+        fields = {
+            field.id: field for record in records.values() for field in record.fields
+        }
         metadata = {
             field.length_field_id
             for field in fields.values()
@@ -568,24 +654,38 @@ class SchemaBuilder:
         }
         for field in fields.values():
             if field.required and field.flatten:
-                raise AnnotationError("required cannot be combined with flatten", field.location)
+                raise AnnotationError(
+                    "required cannot be combined with flatten", field.location
+                )
             if field.flatten and self.types[field.type_id].kind is not TypeKind.RECORD:
-                raise AnnotationError("flatten requires a by-value structure field", field.location)
+                raise AnnotationError(
+                    "flatten requires a by-value structure field", field.location
+                )
             if field.flatten and (
                 field.key_explicit
                 or field.length_field_id is not None
                 or any(
                     value is not None
-                    for value in (field.minimum, field.maximum, field.min_length, field.max_length)
+                    for value in (
+                        field.minimum,
+                        field.maximum,
+                        field.min_length,
+                        field.max_length,
+                    )
                 )
             ):
-                raise AnnotationError("flatten cannot be combined with key, len, or constraints", field.location)
+                raise AnnotationError(
+                    "flatten cannot be combined with key, len, or constraints",
+                    field.location,
+                )
             if field.id in metadata and field.required:
                 raise AnnotationError(
                     "an array length metadata field cannot be required", field.location
                 )
             if field.flatten and records[field.type_id].shape is RecordShape.ARRAY:
-                raise AnnotationError("an array-shaped record cannot be flattened", field.location)
+                raise AnnotationError(
+                    "an array-shaped record cannot be flattened", field.location
+                )
 
         def add_record(record_id: str, keys: dict[str, str], prefix: str) -> None:
             for field in records[record_id].fields:
@@ -607,7 +707,9 @@ class SchemaBuilder:
             if record.shape is RecordShape.OBJECT:
                 add_record(record.id, {}, "")
 
-    def _build_functions(self, raw_functions, public: set[str]) -> tuple[FunctionSchema, ...]:
+    def _build_functions(
+        self, raw_functions, public: set[str]
+    ) -> tuple[FunctionSchema, ...]:
         cleanups = {
             f"record:{record_name}"
             for _, role, record_name in raw_functions
@@ -632,7 +734,8 @@ class SchemaBuilder:
                 or first.target.name != expected_first
             ):
                 raise AnnotationError(
-                    f"the first @{role} parameter must be {expected_first} *", function.location
+                    f"the first @{role} parameter must be {expected_first} *",
+                    function.location,
                 )
             if record_name is None:
                 raise AnnotationError(
@@ -641,7 +744,9 @@ class SchemaBuilder:
                 )
             record_id = f"record:{record_name}"
             if role == "jsonDecode" and record_id not in public:
-                raise AnnotationError("the @jsonDecode target must have @jsonStruct", function.location)
+                raise AnnotationError(
+                    "the @jsonDecode target must have @jsonStruct", function.location
+                )
             if role == "jsonDecode" and record_id not in cleanups:
                 raise AnnotationError(
                     "each @jsonDecode target requires an @jsonCleanup function",
@@ -668,7 +773,8 @@ class SchemaBuilder:
             if field.length_field_id is not None
         }
         record_ownership = {
-            record.id: record.shape is RecordShape.ARRAY for record in self.records.values()
+            record.id: record.shape is RecordShape.ARRAY
+            for record in self.records.values()
         }
 
         def owns(type_id: str) -> bool:
