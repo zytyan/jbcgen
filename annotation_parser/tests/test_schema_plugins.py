@@ -41,10 +41,7 @@ class ExampleState:
 class FakePlugin:
     def __init__(self, plugin_id: str, spec: AnnotationArgumentSpec):
         self.key = PluginKey(plugin_id, ExampleState)
-        self.spec = spec
-
-    def annotation_commands(self) -> tuple[AnnotationCommandSpec, ...]:
-        return (AnnotationCommandSpec("json", (self.spec,)),)
+        self.annotation_commands = (AnnotationCommandSpec("json", (spec,)),)
 
     def format_state(self, state: object) -> str:
         return repr(state)
@@ -60,16 +57,12 @@ EXTENSION_KEY = PluginKey("example.extension.v1", ExtensionState)
 
 class ExtensionPlugin:
     key = EXTENSION_KEY
-
-    def annotation_commands(self) -> tuple[AnnotationCommandSpec, ...]:
-        return ()
-
-    def dependencies(self) -> tuple[PluginKey[object], ...]:
-        return (BINDING_KEY,)
+    annotation_commands: tuple[AnnotationCommandSpec, ...] = ()
+    dependencies = (BINDING_KEY,)
 
     def build(self, context: PluginBuildContext) -> ExtensionState:
         binding = context.states.require(BINDING_KEY)
-        return ExtensionState(tuple(item.field_id for item in binding.fields))
+        return ExtensionState(tuple(binding.fields))
 
     def validate(
         self, context: PluginValidationContext, state: ExtensionState
@@ -178,7 +171,7 @@ class BuiltinPluginTest(unittest.TestCase):
             LOCATION,
         )
         unit = TranslationUnit(Path("input.h"), (vector, root), (), (), ())
-        entrypoints = EntrypointsPlugin().discover(unit)
+        entrypoints = EntrypointsPlugin().build(PluginBuildContext(unit, None, PluginSet()))
         core = build_core_schema(unit, entrypoints.root_record_names(), ())
         empty = PluginSet()
         binding = BindingPlugin().build(PluginBuildContext(unit, core, empty))
@@ -188,13 +181,13 @@ class BuiltinPluginTest(unittest.TestCase):
         BindingPlugin().validate(validation, binding)
         ArrayLayoutPlugin().validate(validation, arrays)
 
-        values = binding.field_map()["field:Root.values"]
+        values = binding.fields["field:Root.values"]
         self.assertEqual(values.key, "items")
         self.assertTrue(values.required)
-        dynamic = arrays.field_map()["field:Root.values"]
+        dynamic = arrays.fields["field:Root.values"]
         self.assertTrue(dynamic.dynamic)
         self.assertEqual(dynamic.length_field_id, "field:Root.count")
-        vec = arrays.record_map()["record:Vec"]
+        vec = arrays.records["record:Vec"]
         self.assertEqual(vec.elems_field_id, "field:Vec.elems")
         self.assertEqual(vec.length_field_id, "field:Vec.len")
         self.assertEqual(vec.capacity_field_id, "field:Vec.cap")
@@ -213,7 +206,7 @@ class BuiltinPluginTest(unittest.TestCase):
         )
         unit = TranslationUnit(Path("input.h"), (root,), (), (), ())
         schema = build_schema_ir(unit)
-        ids = tuple(entry.id for entry in schema.plugins.entries)
+        ids = tuple(schema.plugins.states)
         self.assertEqual(ids, tuple(sorted(ids)))
         self.assertEqual(
             set(ids),
@@ -232,9 +225,9 @@ class BuiltinPluginTest(unittest.TestCase):
             ("field:Root.name",),
         )
         self.assertTrue(
-            schema.plugins.require(OWNERSHIP_KEY).field_map()["field:Root.name"]
+            schema.plugins.require(OWNERSHIP_KEY).fields["field:Root.name"]
         )
-        constraint = schema.plugins.require(CONSTRAINTS_KEY).field_map()
+        constraint = schema.plugins.require(CONSTRAINTS_KEY).fields
         self.assertEqual(constraint["field:Root.name"].max_length, 8)
         self.assertEqual(constraint["field:Root.score"].minimum, "1")
         rendered = format_schema_ir(schema)

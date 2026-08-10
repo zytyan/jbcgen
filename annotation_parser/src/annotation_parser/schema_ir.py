@@ -6,13 +6,7 @@ from typing import Any
 from .clang_frontend import TranslationUnit
 from .schema_core import CoreSchemaIR, build_core_schema, format_core_schema
 from .schema_plugins import (
-    ARRAY_LAYOUT_KEY,
-    BINDING_KEY,
-    CONSTRAINTS_KEY,
-    ENCODE_HINTS_KEY,
     ENTRYPOINTS_KEY,
-    OWNERSHIP_KEY,
-    VALUE_TYPES_KEY,
     AnnotationRegistry,
     ArrayLayoutPlugin,
     BindingPlugin,
@@ -45,15 +39,18 @@ class SchemaIR:
 
 
 def builtin_plugins() -> tuple[SchemaPlugin[Any], ...]:
-    return (
-        EntrypointsPlugin(),
-        BindingPlugin(),
-        ArrayLayoutPlugin(),
-        JsonValueTypesPlugin(),
-        ConstraintsPlugin(),
-        OwnershipPlugin(),
-        EncodeHintsPlugin(),
-    )
+    return _BUILTIN_PLUGINS
+
+
+_BUILTIN_PLUGINS: tuple[SchemaPlugin[Any], ...] = (
+    EntrypointsPlugin(),
+    BindingPlugin(),
+    ArrayLayoutPlugin(),
+    JsonValueTypesPlugin(),
+    ConstraintsPlugin(),
+    OwnershipPlugin(),
+    EncodeHintsPlugin(),
+)
 
 
 def _validate_annotations(
@@ -101,14 +98,14 @@ def build_schema_ir(
         ready = [
             plugin
             for plugin in remaining.values()
-            if all(dependency.id in complete for dependency in plugin.dependencies())
+            if all(dependency.id in complete for dependency in plugin.dependencies)
         ]
         if not ready:
             missing = sorted(
                 {
                     dependency.id
                     for plugin in remaining.values()
-                    for dependency in plugin.dependencies()
+                    for dependency in plugin.dependencies
                     if dependency.id not in by_id
                 }
             )
@@ -133,21 +130,13 @@ def build_schema_ir(
 
 
 def format_schema_ir(schema: SchemaIR) -> str:
-    formatters = {
-        ENTRYPOINTS_KEY.id: EntrypointsPlugin().format_state,
-        BINDING_KEY.id: BindingPlugin().format_state,
-        ARRAY_LAYOUT_KEY.id: ArrayLayoutPlugin().format_state,
-        VALUE_TYPES_KEY.id: JsonValueTypesPlugin().format_state,
-        CONSTRAINTS_KEY.id: ConstraintsPlugin().format_state,
-        OWNERSHIP_KEY.id: OwnershipPlugin().format_state,
-        ENCODE_HINTS_KEY.id: EncodeHintsPlugin().format_state,
-    }
+    formatters = {plugin.key.id: plugin.format_state for plugin in _BUILTIN_PLUGINS}
     lines = ["SchemaIR"]
     lines.extend(f"  {line}" for line in format_core_schema(schema.core).splitlines())
     lines.append("  plugins")
-    for entry in schema.plugins.entries:
-        lines.append(f"    plugin {entry.id}")
-        formatter = formatters.get(entry.id)
-        rendered = formatter(entry.state) if formatter else repr(entry.state)
+    for plugin_id, state in schema.plugins.states.items():
+        lines.append(f"    plugin {plugin_id}")
+        formatter = formatters.get(plugin_id)
+        rendered = formatter(state) if formatter else repr(state)
         lines.extend(f"      {line}" for line in rendered.splitlines())
     return "\n".join(lines)

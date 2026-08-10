@@ -79,10 +79,10 @@ class SchemaIrTest(unittest.TestCase):
         cities = records["record:User"].fields[0]
         count = records["record:User"].fields[1]
         values = schema.plugins.require(VALUE_TYPES_KEY)
-        self.assertEqual(values.type_map()[values.field_map()[cities.id]].kind, TypeKind.DYNAMIC_ARRAY)
-        self.assertTrue(schema.plugins.require(BINDING_KEY).field_map()[cities.id].required)
+        self.assertEqual(values.types[values.fields[cities.id]].kind, TypeKind.DYNAMIC_ARRAY)
+        self.assertTrue(schema.plugins.require(BINDING_KEY).fields[cities.id].required)
         self.assertIn(count.id, schema.plugins.require(ARRAY_LAYOUT_KEY).metadata_field_ids())
-        self.assertTrue(schema.plugins.require(OWNERSHIP_KEY).record_map()["record:User"])
+        self.assertTrue(schema.plugins.require(OWNERSHIP_KEY).records["record:User"])
         rendered = format_schema_ir(schema)
         self.assertIn("record record:User", rendered)
         self.assertIn("required", rendered)
@@ -145,8 +145,8 @@ class SchemaIrTest(unittest.TestCase):
             )
             with self.subTest(annotation=annotation):
                 schema = build_schema_ir(unit((record,)))
-                storage = schema.plugins.require(ARRAY_LAYOUT_KEY).record_map()[f"record:{name}"]
-                shape = schema.plugins.require(VALUE_TYPES_KEY).record_map()[f"record:{name}"].shape
+                storage = schema.plugins.require(ARRAY_LAYOUT_KEY).records[f"record:{name}"]
+                shape = schema.plugins.require(VALUE_TYPES_KEY).records[f"record:{name}"]
                 self.assertEqual(shape, RecordShape.ARRAY)
                 self.assertEqual(storage.elems_field_id, f"field:{name}.elems")
                 self.assertEqual(storage.element_type_id, "integer:i32")

@@ -3,40 +3,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import Enum
+from typing import Mapping
 
 from ..annotations import Annotation
 from ..clang_frontend import AstField
-from ..diagnostics import AnnotationError, SourceLocation
+from ..diagnostics import AnnotationError
 from ..schema_core import CoreTypeKind
 from .base import (
-    AnnotationArgumentSpec,
     AnnotationCommandSpec,
-    AnnotationMode,
     PluginBuildContext,
     PluginKey,
-    PluginValidationContext,
+    SchemaPluginBase,
+    argument_value,
+    find_annotation,
+    flag_argument,
+    frozen_map,
+    has_flag,
+    value_argument,
 )
-from .builtin import ARRAY_LAYOUT_KEY, ArrayLayoutState
-
-
-def _annotation(
-    annotations: tuple[Annotation, ...], name: str, location: SourceLocation
-) -> Annotation | None:
-    selected = [item for item in annotations if item.name == name]
-    if len(selected) > 1:
-        raise AnnotationError(f"a declaration may contain only one @{name} annotation", location)
-    return selected[0] if selected else None
-
-
-def _one(annotation: Annotation | None, name: str) -> str | None:
-    if annotation is None:
-        return None
-    values = annotation.values(name)
-    return values[0] if values else None
-
-
-def _flag(annotation: Annotation | None, name: str) -> bool:
-    return bool(annotation and annotation.values(name))
+from .builtin import ARRAY_LAYOUT_KEY
 
 
 class JsonValueKind(Enum):
@@ -68,54 +53,19 @@ class JsonValueType:
 
 
 @dataclass(frozen=True)
-class FieldValueType:
-    field_id: str
-    type_id: str
-
-
-@dataclass(frozen=True)
-class CoreValueType:
-    core_type_id: str
-    type_id: str
-
-
-@dataclass(frozen=True)
-class RecordValueType:
-    record_id: str
-    shape: RecordShape
-
-
-@dataclass(frozen=True)
 class JsonValueTypesState:
-    types: tuple[JsonValueType, ...]
-    core_types: tuple[CoreValueType, ...]
-    fields: tuple[FieldValueType, ...]
-    records: tuple[RecordValueType, ...]
-
-    def type_map(self) -> dict[str, JsonValueType]:
-        return {item.id: item for item in self.types}
-
-    def field_map(self) -> dict[str, str]:
-        return {item.field_id: item.type_id for item in self.fields}
-
-    def core_type_map(self) -> dict[str, str]:
-        return {item.core_type_id: item.type_id for item in self.core_types}
-
-    def record_map(self) -> dict[str, RecordValueType]:
-        return {item.record_id: item for item in self.records}
+    types: Mapping[str, JsonValueType]
+    core_types: Mapping[str, str]
+    fields: Mapping[str, str]
+    records: Mapping[str, RecordShape]
 
 
 VALUE_TYPES_KEY = PluginKey("jbcgen.json.value-types.v1", JsonValueTypesState)
 
 
-class JsonValueTypesPlugin:
+class JsonValueTypesPlugin(SchemaPluginBase[JsonValueTypesState]):
     key = VALUE_TYPES_KEY
-
-    def annotation_commands(self) -> tuple[AnnotationCommandSpec, ...]:
-        return ()
-
-    def dependencies(self) -> tuple[PluginKey[object], ...]:
-        return (ARRAY_LAYOUT_KEY,)
+    dependencies = (ARRAY_LAYOUT_KEY,)
 
     def build(self, context: PluginBuildContext) -> JsonValueTypesState:
         core = context.core
@@ -197,8 +147,8 @@ class JsonValueTypesPlugin:
             derived[core_type_id] = value.id
             return value.id
 
-        field_arrays = arrays.field_map()
-        fields: list[FieldValueType] = []
+        field_arrays = arrays.fields
+        fields: dict[str, str] = {}
         for record in core.records:
             for field in record.fields:
                 layout = field_arrays.get(field.id)
@@ -216,47 +166,42 @@ class JsonValueTypesPlugin:
                     type_id = value.id
                 else:
                     type_id = convert(field.type_id)
-                fields.append(FieldValueType(field.id, type_id))
-        record_arrays = arrays.record_map()
-        records = tuple(
-            RecordValueType(
-                record.id,
-                RecordShape.ARRAY if record.id in record_arrays else RecordShape.OBJECT,
+                fields[field.id] = type_id
+        records = {
+            record.id: (
+                RecordShape.ARRAY
+                if record.id in arrays.records
+                else RecordShape.OBJECT
             )
             for record in core.records
-        )
+        }
         return JsonValueTypesState(
-            tuple(sorted(result.values(), key=lambda item: item.id)),
-            tuple(
-                CoreValueType(core_type_id, type_id)
-                for core_type_id, type_id in sorted(derived.items())
-            ),
-            tuple(sorted(fields, key=lambda item: item.field_id)),
-            records,
+            frozen_map(result.items()),
+            frozen_map(derived.items()),
+            frozen_map(fields.items()),
+            frozen_map(records.items()),
         )
-
-    def validate(
-        self, context: PluginValidationContext, state: JsonValueTypesState
-    ) -> None:
-        return
 
     def format_state(self, state: JsonValueTypesState) -> str:
         lines = [
             f"type {item.id} kind={item.kind.value}"
             + (f" target={item.target}" if item.target else "")
             + (f" capacity={item.capacity}" if item.capacity is not None else "")
-            for item in state.types
+            for item in state.types.values()
         ]
-        lines.extend(f"field {item.field_id} -> {item.type_id}" for item in state.fields)
         lines.extend(
-            f"record {item.record_id} shape={item.shape.value}" for item in state.records
+            f"field {field_id} -> {type_id}"
+            for field_id, type_id in state.fields.items()
+        )
+        lines.extend(
+            f"record {record_id} shape={shape.value}"
+            for record_id, shape in state.records.items()
         )
         return "\n".join(lines)
 
 
 @dataclass(frozen=True)
 class FieldConstraint:
-    field_id: str
     minimum: str | None
     maximum: str | None
     min_length: int | None
@@ -265,31 +210,24 @@ class FieldConstraint:
 
 @dataclass(frozen=True)
 class ConstraintsState:
-    fields: tuple[FieldConstraint, ...]
-
-    def field_map(self) -> dict[str, FieldConstraint]:
-        return {item.field_id: item for item in self.fields}
+    fields: Mapping[str, FieldConstraint]
 
 
 CONSTRAINTS_KEY = PluginKey("jbcgen.json.constraints.v1", ConstraintsState)
 
 
-class ConstraintsPlugin:
+class ConstraintsPlugin(SchemaPluginBase[ConstraintsState]):
     key = CONSTRAINTS_KEY
-
-    def annotation_commands(self) -> tuple[AnnotationCommandSpec, ...]:
-        return (
-            AnnotationCommandSpec(
-                "json",
-                tuple(
-                    AnnotationArgumentSpec(name, AnnotationMode.VALUE)
-                    for name in ("min", "max", "minlen", "maxlen")
-                ),
+    annotation_commands = (
+        AnnotationCommandSpec(
+            "json",
+            tuple(
+                value_argument(name)
+                for name in ("min", "max", "minlen", "maxlen")
             ),
-        )
-
-    def dependencies(self) -> tuple[PluginKey[object], ...]:
-        return (VALUE_TYPES_KEY,)
+        ),
+    )
+    dependencies = (VALUE_TYPES_KEY,)
 
     def build(self, context: PluginBuildContext) -> ConstraintsState:
         unit = context.unit
@@ -297,8 +235,8 @@ class ConstraintsPlugin:
         assert core is not None
         plugins = context.states
         values = plugins.require(VALUE_TYPES_KEY)
-        field_types = values.field_map()
-        types = values.type_map()
+        field_types = values.fields
+        types = values.types
         core_fields = core.field_map()
         ast_fields = {
             f"field:{record.name}.{field.name}": field
@@ -306,11 +244,11 @@ class ConstraintsPlugin:
             for field in record.fields
             if f"field:{record.name}.{field.name}" in core_fields
         }
-        result: list[FieldConstraint] = []
+        result: dict[str, FieldConstraint] = {}
         for field_id, ast_field in ast_fields.items():
-            annotation = _annotation(ast_field.annotations, "json", ast_field.location)
-            minimum = _one(annotation, "min")
-            maximum = _one(annotation, "max")
+            annotation = find_annotation(ast_field.annotations, "json", ast_field.location)
+            minimum = argument_value(annotation, "min")
+            maximum = argument_value(annotation, "max")
             if minimum is not None or maximum is not None:
                 if types[field_types[field_id]].kind not in {
                     JsonValueKind.INTEGER,
@@ -338,22 +276,15 @@ class ConstraintsPlugin:
             if min_length is not None and max_length is not None and min_length > max_length:
                 raise AnnotationError("minlen cannot exceed maxlen", ast_field.location)
             if any(value is not None for value in (minimum, maximum, min_length, max_length)):
-                result.append(
-                    FieldConstraint(
-                        field_id, minimum, maximum, min_length, max_length
-                    )
+                result[field_id] = FieldConstraint(
+                    minimum, maximum, min_length, max_length
                 )
-        return ConstraintsState(tuple(sorted(result, key=lambda item: item.field_id)))
-
-    def validate(
-        self, context: PluginValidationContext, state: ConstraintsState
-    ) -> None:
-        return
+        return ConstraintsState(frozen_map(result.items()))
 
     def _length(
         self, annotation: Annotation | None, name: str, field: AstField
     ) -> int | None:
-        value = _one(annotation, name)
+        value = argument_value(annotation, name)
         if value is None:
             return None
         try:
@@ -366,57 +297,25 @@ class ConstraintsPlugin:
 
     def format_state(self, state: ConstraintsState) -> str:
         return "\n".join(
-            f"{item.field_id} min={item.minimum} max={item.maximum} "
+            f"{field_id} min={item.minimum} max={item.maximum} "
             f"minlen={item.min_length} maxlen={item.max_length}"
-            for item in state.fields
+            for field_id, item in state.fields.items()
         )
 
 
 @dataclass(frozen=True)
-class TypeOwnership:
-    type_id: str
-    owns_resources: bool
-
-
-@dataclass(frozen=True)
-class FieldOwnership:
-    field_id: str
-    owns_resources: bool
-
-
-@dataclass(frozen=True)
-class RecordOwnership:
-    record_id: str
-    owns_resources: bool
-
-
-@dataclass(frozen=True)
 class OwnershipState:
-    types: tuple[TypeOwnership, ...]
-    fields: tuple[FieldOwnership, ...]
-    records: tuple[RecordOwnership, ...]
-
-    def type_map(self) -> dict[str, bool]:
-        return {item.type_id: item.owns_resources for item in self.types}
-
-    def field_map(self) -> dict[str, bool]:
-        return {item.field_id: item.owns_resources for item in self.fields}
-
-    def record_map(self) -> dict[str, bool]:
-        return {item.record_id: item.owns_resources for item in self.records}
+    types: Mapping[str, bool]
+    fields: Mapping[str, bool]
+    records: Mapping[str, bool]
 
 
 OWNERSHIP_KEY = PluginKey("jbcgen.json.ownership.v1", OwnershipState)
 
 
-class OwnershipPlugin:
+class OwnershipPlugin(SchemaPluginBase[OwnershipState]):
     key = OWNERSHIP_KEY
-
-    def annotation_commands(self) -> tuple[AnnotationCommandSpec, ...]:
-        return ()
-
-    def dependencies(self) -> tuple[PluginKey[object], ...]:
-        return (VALUE_TYPES_KEY, ARRAY_LAYOUT_KEY)
+    dependencies = (VALUE_TYPES_KEY, ARRAY_LAYOUT_KEY)
 
     def build(self, context: PluginBuildContext) -> OwnershipState:
         core = context.core
@@ -424,11 +323,13 @@ class OwnershipPlugin:
         plugins = context.states
         values = plugins.require(VALUE_TYPES_KEY)
         arrays = plugins.require(ARRAY_LAYOUT_KEY)
-        types = values.type_map()
-        field_types = values.field_map()
-        array_records = arrays.record_map()
+        types = values.types
+        field_types = values.fields
+        array_records = arrays.records
         ignored = {
-            field_id for item in arrays.records for field_id in item.ignored_field_ids
+            field_id
+            for item in arrays.records.values()
+            for field_id in item.ignored_field_ids
         }
         metadata = arrays.metadata_field_ids()
         record_ownership = {record.id: record.id in array_records for record in core.records}
@@ -461,51 +362,40 @@ class OwnershipPlugin:
                     record_ownership[record.id] = value
                     changed = True
 
-        type_ownership = tuple(
-            TypeOwnership(item.id, owns(item.id)) for item in values.types
-        )
-        fields = tuple(
-            FieldOwnership(
-                field.id,
+        type_ownership = {type_id: owns(type_id) for type_id in values.types}
+        fields = {
+            field.id: (
                 False
                 if field.id in ignored or field.id in metadata
-                else owns(field_types[field.id]),
+                else owns(field_types[field.id])
             )
             for record in core.records
             for field in record.fields
-        )
-        for layout in arrays.records:
+        }
+        for record_id, layout in arrays.records.items():
             if (
                 layout.length_field_id is None
                 and layout.capacity_field_id is None
-                and owns(values.core_type_map()[layout.element_type_id])
+                and owns(values.core_types[layout.element_type_id])
             ):
                 raise AnnotationError(
                     "an array record without len or cap requires a trivially releasable element type",
-                    core.record_map()[layout.record_id].location,
+                    core.record_map()[record_id].location,
                 )
         return OwnershipState(
-            type_ownership,
-            fields,
-            tuple(
-                RecordOwnership(record.id, record_ownership[record.id])
-                for record in core.records
-            ),
+            frozen_map(type_ownership.items()),
+            frozen_map(fields.items()),
+            frozen_map(record_ownership.items()),
         )
-
-    def validate(
-        self, context: PluginValidationContext, state: OwnershipState
-    ) -> None:
-        return
 
     def format_state(self, state: OwnershipState) -> str:
         lines = [
-            f"record {item.record_id} owns={str(item.owns_resources).lower()}"
-            for item in state.records
+            f"record {record_id} owns={str(owns).lower()}"
+            for record_id, owns in state.records.items()
         ]
         lines.extend(
-            f"field {item.field_id} owns={str(item.owns_resources).lower()}"
-            for item in state.fields
+            f"field {field_id} owns={str(owns).lower()}"
+            for field_id, owns in state.fields.items()
         )
         return "\n".join(lines)
 
@@ -518,18 +408,11 @@ class EncodeHintsState:
 ENCODE_HINTS_KEY = PluginKey("jbcgen.json.encode-hints.v1", EncodeHintsState)
 
 
-class EncodeHintsPlugin:
+class EncodeHintsPlugin(SchemaPluginBase[EncodeHintsState]):
     key = ENCODE_HINTS_KEY
-
-    def annotation_commands(self) -> tuple[AnnotationCommandSpec, ...]:
-        return (
-            AnnotationCommandSpec(
-                "json", (AnnotationArgumentSpec("omitempty", AnnotationMode.FLAG),)
-            ),
-        )
-
-    def dependencies(self) -> tuple[PluginKey[object], ...]:
-        return ()
+    annotation_commands = (
+        AnnotationCommandSpec("json", (flag_argument("omitempty"),)),
+    )
 
     def build(self, context: PluginBuildContext) -> EncodeHintsState:
         unit = context.unit
@@ -542,15 +425,10 @@ class EncodeHintsPlugin:
                 field_id = f"field:{record.name}.{field.name}"
                 if field_id not in reachable:
                     continue
-                annotation = _annotation(field.annotations, "json", field.location)
-                if _flag(annotation, "omitempty"):
+                annotation = find_annotation(field.annotations, "json", field.location)
+                if has_flag(annotation, "omitempty"):
                     fields.append(field_id)
         return EncodeHintsState(tuple(sorted(fields)))
-
-    def validate(
-        self, context: PluginValidationContext, state: EncodeHintsState
-    ) -> None:
-        return
 
     def format_state(self, state: EncodeHintsState) -> str:
         return "\n".join(f"omitempty {item}" for item in state.omitempty_field_ids)

@@ -42,9 +42,9 @@ class CGenerator:
         self.decode_plan = decode_plan
         self.release_plan = release_plan
         value_types = schema.plugins.require(VALUE_TYPES_KEY)
-        self.types = value_types.type_map()
+        self.types = value_types.types
         self.records = schema.core.record_map()
-        self.record_values = value_types.record_map()
+        self.record_shapes = value_types.records
         self.decode_objects = {item.record_id: item for item in decode_plan.objects}
         self.decode_arrays = {item.record_id: item for item in decode_plan.arrays}
         self.release_objects = {item.record_id: item for item in release_plan.objects}
@@ -204,7 +204,7 @@ class CGenerator:
         return result
 
     def _generate_release(self, record: CoreRecordSchema) -> list[str]:
-        if self.record_values[record.id].shape is RecordShape.ARRAY:
+        if self.record_shapes[record.id] is RecordShape.ARRAY:
             return self._generate_array_release(record, self.release_arrays[record.id])
         plan = self.release_objects[record.id]
         lines = [self._release_prototype(record), "{", "    if (out == NULL) {", "        return;", "    }"]
@@ -305,7 +305,7 @@ class CGenerator:
         return lines
 
     def _generate_decode(self, record: CoreRecordSchema) -> list[str]:
-        if self.record_values[record.id].shape is RecordShape.ARRAY:
+        if self.record_shapes[record.id] is RecordShape.ARRAY:
             return self._generate_array_decode(record, self.decode_arrays[record.id])
         plan = self.decode_objects[record.id]
         count = max(1, len(plan.fields))
@@ -741,12 +741,12 @@ class CGenerator:
             target_record = self.records[target.id]
             token = (
                 "JSON_TOKEN_LBRACKET"
-                if self.record_values[target_record.id].shape is RecordShape.ARRAY
+                if self.record_shapes[target_record.id] is RecordShape.ARRAY
                 else "JSON_TOKEN_LBRACE"
             )
             expected = (
                 "JSON_EXPECTED_ARRAY"
-                if self.record_values[target_record.id].shape is RecordShape.ARRAY
+                if self.record_shapes[target_record.id] is RecordShape.ARRAY
                 else "JSON_EXPECTED_OBJECT"
             )
             lines.extend([

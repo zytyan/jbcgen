@@ -148,7 +148,7 @@ _DECODE_OPERATIONS = {
 
 
 def _decode_value(type_id: str, schema: SchemaIR) -> DecodeValuePlan:
-    item = schema.plugins.require(VALUE_TYPES_KEY).type_map()[type_id]
+    item = schema.plugins.require(VALUE_TYPES_KEY).types[type_id]
     return DecodeValuePlan(
         type_id,
         _DECODE_OPERATIONS[item.kind],
@@ -164,12 +164,12 @@ def _decode_fields(
     prefix: tuple[str, ...] = (),
 ) -> list[DecodeFieldPlan]:
     records = schema.core.record_map()
-    bindings = schema.plugins.require(BINDING_KEY).field_map()
+    bindings = schema.plugins.require(BINDING_KEY).fields
     arrays = schema.plugins.require(ARRAY_LAYOUT_KEY)
-    array_fields = arrays.field_map()
+    array_fields = arrays.fields
     metadata = arrays.metadata_field_ids()
-    field_types = schema.plugins.require(VALUE_TYPES_KEY).field_map()
-    constraints = schema.plugins.require(CONSTRAINTS_KEY).field_map()
+    field_types = schema.plugins.require(VALUE_TYPES_KEY).fields
+    constraints = schema.plugins.require(CONSTRAINTS_KEY).fields
     core_fields = schema.core.field_map()
     result: list[DecodeFieldPlan] = []
     for field in record.fields:
@@ -204,10 +204,10 @@ def _decode_fields(
 
 def build_decode_plan(schema: SchemaIR) -> DecodePlan:
     value_state = schema.plugins.require(VALUE_TYPES_KEY)
-    values = tuple(_decode_value(item.id, schema) for item in value_state.types)
+    values = tuple(_decode_value(type_id, schema) for type_id in value_state.types)
     arrays_state = schema.plugins.require(ARRAY_LAYOUT_KEY)
-    array_records = arrays_state.record_map()
-    field_types = value_state.field_map()
+    array_records = arrays_state.records
+    field_types = value_state.fields
     core_fields = schema.core.field_map()
     objects: list[DecodeObjectPlan] = []
     arrays: list[DecodeArrayPlan] = []
@@ -221,7 +221,7 @@ def build_decode_plan(schema: SchemaIR) -> DecodePlan:
                 DecodeArrayPlan(
                     record.id,
                     (elems.name,),
-                    _decode_value(value_state.core_type_map()[storage.element_type_id], schema),
+                    _decode_value(value_state.core_types[storage.element_type_id], schema),
                     (length.name,) if length else None,
                     field_types[length.id] if length else None,
                     (capacity.name,) if capacity else None,
@@ -264,9 +264,9 @@ def build_decode_plan(schema: SchemaIR) -> DecodePlan:
 
 
 def _release_operation(field: CoreFieldSchema, schema: SchemaIR) -> ReleaseOperation | None:
-    type_id = schema.plugins.require(VALUE_TYPES_KEY).field_map()[field.id]
-    item = schema.plugins.require(VALUE_TYPES_KEY).type_map()[type_id]
-    if not schema.plugins.require(OWNERSHIP_KEY).field_map()[field.id]:
+    type_id = schema.plugins.require(VALUE_TYPES_KEY).fields[field.id]
+    item = schema.plugins.require(VALUE_TYPES_KEY).types[type_id]
+    if not schema.plugins.require(OWNERSHIP_KEY).fields[field.id]:
         return None
     if item.kind is TypeKind.STRING:
         return ReleaseOperation.STRING
@@ -283,10 +283,10 @@ def _release_operation(field: CoreFieldSchema, schema: SchemaIR) -> ReleaseOpera
 
 def build_release_plan(schema: SchemaIR) -> ReleasePlan:
     values = schema.plugins.require(VALUE_TYPES_KEY)
-    type_map = values.type_map()
-    field_types = values.field_map()
+    type_map = values.types
+    field_types = values.fields
     layouts = schema.plugins.require(ARRAY_LAYOUT_KEY)
-    array_records = layouts.record_map()
+    array_records = layouts.records
     metadata = layouts.metadata_field_ids()
     ownership = schema.plugins.require(OWNERSHIP_KEY)
     core_fields = schema.core.field_map()
@@ -298,7 +298,7 @@ def build_release_plan(schema: SchemaIR) -> ReleasePlan:
             elems = core_fields[storage.elems_field_id]
             length = core_fields[storage.length_field_id] if storage.length_field_id else None
             capacity = core_fields[storage.capacity_field_id] if storage.capacity_field_id else None
-            element_type_id = values.core_type_map()[storage.element_type_id]
+            element_type_id = values.core_types[storage.element_type_id]
             arrays.append(
                 ReleaseArrayPlan(
                     record.id,
@@ -306,7 +306,7 @@ def build_release_plan(schema: SchemaIR) -> ReleasePlan:
                     element_type_id,
                     (length.name,) if length else None,
                     (capacity.name,) if capacity else None,
-                    ownership.type_map()[element_type_id],
+                    ownership.types[element_type_id],
                     True,
                 )
             )
@@ -320,7 +320,7 @@ def build_release_plan(schema: SchemaIR) -> ReleasePlan:
                 continue
             type_id = field_types[field.id]
             item = type_map[type_id]
-            layout = layouts.field_map().get(field.id)
+            layout = layouts.fields.get(field.id)
             length = core_fields[layout.length_field_id] if layout else None
             fields.append(
                 ReleaseFieldPlan(
@@ -342,7 +342,7 @@ def build_release_plan(schema: SchemaIR) -> ReleasePlan:
 
 
 def _type_owns(type_id: str, schema: SchemaIR) -> bool:
-    return schema.plugins.require(OWNERSHIP_KEY).type_map()[type_id]
+    return schema.plugins.require(OWNERSHIP_KEY).types[type_id]
 
 
 def _path(path: tuple[str, ...]) -> str:

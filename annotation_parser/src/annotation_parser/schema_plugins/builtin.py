@@ -1,39 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 from ..annotations import Annotation
-from ..clang_frontend import AstField, AstRecord, AstTypeKind, TranslationUnit
-from ..diagnostics import AnnotationError, SourceLocation
+from ..clang_frontend import AstRecord, AstTypeKind
+from ..diagnostics import AnnotationError
 from ..schema_core import CoreFieldSchema, CoreTypeKind, CoreTypeSchema
 from .base import (
-    AnnotationArgumentSpec,
     AnnotationCommandSpec,
-    AnnotationMode,
     PluginBuildContext,
     PluginKey,
     PluginValidationContext,
+    SchemaPluginBase,
+    argument_value,
+    find_annotation,
+    flag_argument,
+    frozen_map,
+    has_flag,
+    value_argument,
 )
-
-
-def _annotation(
-    annotations: tuple[Annotation, ...], name: str, location: SourceLocation
-) -> Annotation | None:
-    selected = [item for item in annotations if item.name == name]
-    if len(selected) > 1:
-        raise AnnotationError(f"a declaration may contain only one @{name} annotation", location)
-    return selected[0] if selected else None
-
-
-def _one(annotation: Annotation | None, name: str) -> str | None:
-    if annotation is None:
-        return None
-    values = annotation.values(name)
-    return values[0] if values else None
-
-
-def _flag(annotation: Annotation | None, name: str) -> bool:
-    return bool(annotation and annotation.values(name))
 
 
 @dataclass(frozen=True)
@@ -66,33 +52,26 @@ class EntrypointsState:
 ENTRYPOINTS_KEY = PluginKey("jbcgen.json.entrypoints.v1", EntrypointsState)
 
 
-class EntrypointsPlugin:
+class EntrypointsPlugin(SchemaPluginBase[EntrypointsState]):
     key = ENTRYPOINTS_KEY
-
-    def annotation_commands(self) -> tuple[AnnotationCommandSpec, ...]:
-        return (
-            AnnotationCommandSpec("jsonStruct"),
-            AnnotationCommandSpec("jsonDecode"),
-            AnnotationCommandSpec("jsonCleanup"),
-        )
-
-    def dependencies(self) -> tuple[PluginKey[object], ...]:
-        return ()
+    annotation_commands = (
+        AnnotationCommandSpec("jsonStruct"),
+        AnnotationCommandSpec("jsonDecode"),
+        AnnotationCommandSpec("jsonCleanup"),
+    )
 
     def build(self, context: PluginBuildContext) -> EntrypointsState:
-        return self.discover(context.unit)
-
-    def discover(self, unit: TranslationUnit) -> EntrypointsState:
+        unit = context.unit
         public_records: list[str] = []
         for record in unit.records:
-            if _annotation(record.annotations, "jsonStruct", record.location) is not None:
+            if find_annotation(record.annotations, "jsonStruct", record.location) is not None:
                 public_records.append(f"record:{record.name}")
 
         functions: list[FunctionEntrypoint] = []
         records = {record.name for record in unit.records}
         for function in unit.functions:
             for role in ("jsonDecode", "jsonCleanup"):
-                if _annotation(function.annotations, role, function.location) is None:
+                if find_annotation(function.annotations, role, function.location) is None:
                     continue
                 record_id = None
                 if len(function.parameters) >= 2:
@@ -171,7 +150,6 @@ class EntrypointsPlugin:
 
 @dataclass(frozen=True)
 class FieldBinding:
-    field_id: str
     key: str
     altkeys: tuple[str, ...]
     required: bool
@@ -181,60 +159,49 @@ class FieldBinding:
 
 @dataclass(frozen=True)
 class BindingState:
-    fields: tuple[FieldBinding, ...]
-
-    def field_map(self) -> dict[str, FieldBinding]:
-        return {item.field_id: item for item in self.fields}
+    fields: Mapping[str, FieldBinding]
 
 
 BINDING_KEY = PluginKey("jbcgen.json.binding.v1", BindingState)
 
 
-class BindingPlugin:
+class BindingPlugin(SchemaPluginBase[BindingState]):
     key = BINDING_KEY
-
-    def annotation_commands(self) -> tuple[AnnotationCommandSpec, ...]:
-        return (
-            AnnotationCommandSpec(
-                "json",
-                (
-                    AnnotationArgumentSpec("key", AnnotationMode.VALUE),
-                    AnnotationArgumentSpec("altkey", AnnotationMode.VALUE, repeatable=True),
-                    AnnotationArgumentSpec("required", AnnotationMode.FLAG),
-                    AnnotationArgumentSpec("flatten", AnnotationMode.FLAG),
-                ),
+    annotation_commands = (
+        AnnotationCommandSpec(
+            "json",
+            (
+                value_argument("key"),
+                value_argument("altkey", repeatable=True),
+                flag_argument("required"),
+                flag_argument("flatten"),
             ),
-        )
-
-    def dependencies(self) -> tuple[PluginKey[object], ...]:
-        return ()
+        ),
+    )
 
     def build(self, context: PluginBuildContext) -> BindingState:
         unit = context.unit
         core = context.core
         assert core is not None
         ast_records = {item.name: item for item in unit.records}
-        bindings: list[FieldBinding] = []
+        bindings: dict[str, FieldBinding] = {}
         for record in core.records:
             ast_fields = {item.name: item for item in ast_records[record.name].fields}
             for field in record.fields:
                 ast_field = ast_fields[field.name]
-                annotation = _annotation(ast_field.annotations, "json", ast_field.location)
+                annotation = find_annotation(ast_field.annotations, "json", ast_field.location)
                 altkeys = tuple(
                     value for value in (annotation.values("altkey") if annotation else ())
                     if value is not None
                 )
-                bindings.append(
-                    FieldBinding(
-                        field.id,
-                        _one(annotation, "key") or field.name,
-                        altkeys,
-                        _flag(annotation, "required"),
-                        _flag(annotation, "flatten"),
-                        _one(annotation, "key") is not None,
-                    )
+                bindings[field.id] = FieldBinding(
+                    argument_value(annotation, "key") or field.name,
+                    altkeys,
+                    has_flag(annotation, "required"),
+                    has_flag(annotation, "flatten"),
+                    argument_value(annotation, "key") is not None,
                 )
-        return BindingState(tuple(sorted(bindings, key=lambda item: item.field_id)))
+        return BindingState(frozen_map(bindings.items()))
 
     def validate(
         self, context: PluginValidationContext, state: BindingState
@@ -245,7 +212,7 @@ class BindingPlugin:
 
         core = context.core
         plugins = context.states
-        bindings = state.field_map()
+        bindings = state.fields
         types = core.type_map()
         records = core.record_map()
         for field in core.field_map().values():
@@ -261,25 +228,29 @@ class BindingPlugin:
 
         array_layout = plugins.get(ARRAY_LAYOUT_KEY)
         array_records = (
-            {item.record_id for item in array_layout.records} if array_layout else set()
+            set(array_layout.records) if array_layout else set()
         )
         metadata = array_layout.metadata_field_ids() if array_layout else frozenset()
         ignored = (
-            {field_id for item in array_layout.records for field_id in item.ignored_field_ids}
+            {
+                field_id
+                for item in array_layout.records.values()
+                for field_id in item.ignored_field_ids
+            }
             if array_layout
             else set()
         )
         constraint_state = plugins.get(CONSTRAINTS_KEY)
-        constraints = constraint_state.field_map() if constraint_state else {}
-        array_fields = array_layout.field_map() if array_layout else {}
-        for binding in bindings.values():
+        constraints = constraint_state.fields if constraint_state else {}
+        array_fields = array_layout.fields if array_layout else {}
+        for field_id, binding in bindings.items():
             if not binding.flatten:
                 continue
-            field = core.field_map()[binding.field_id]
+            field = core.field_map()[field_id]
             if (
                 binding.explicit_key
-                or binding.field_id in array_fields
-                or binding.field_id in constraints
+                or field_id in array_fields
+                or field_id in constraints
             ):
                 raise AnnotationError(
                     "flatten cannot be combined with key, len, or constraints",
@@ -310,7 +281,7 @@ class BindingPlugin:
 
     def format_state(self, state: BindingState) -> str:
         lines = []
-        for item in state.fields:
+        for field_id, item in state.fields.items():
             flags = []
             if item.required:
                 flags.append("required")
@@ -318,20 +289,18 @@ class BindingPlugin:
                 flags.append("flatten")
             suffix = f" [{' '.join(flags)}]" if flags else ""
             aliases = f" altkeys={item.altkeys!r}" if item.altkeys else ""
-            lines.append(f"{item.field_id} key={item.key!r}{aliases}{suffix}")
+            lines.append(f"{field_id} key={item.key!r}{aliases}{suffix}")
         return "\n".join(lines)
 
 
 @dataclass(frozen=True)
 class FieldArrayLayout:
-    field_id: str
     length_field_id: str
     dynamic: bool
 
 
 @dataclass(frozen=True)
 class RecordArrayLayout:
-    record_id: str
     elems_field_id: str
     element_type_id: str
     length_field_id: str | None
@@ -341,47 +310,36 @@ class RecordArrayLayout:
 
 @dataclass(frozen=True)
 class ArrayLayoutState:
-    fields: tuple[FieldArrayLayout, ...]
-    records: tuple[RecordArrayLayout, ...]
-
-    def field_map(self) -> dict[str, FieldArrayLayout]:
-        return {item.field_id: item for item in self.fields}
-
-    def record_map(self) -> dict[str, RecordArrayLayout]:
-        return {item.record_id: item for item in self.records}
+    fields: Mapping[str, FieldArrayLayout]
+    records: Mapping[str, RecordArrayLayout]
 
     def metadata_field_ids(self) -> frozenset[str]:
-        return frozenset(item.length_field_id for item in self.fields)
+        return frozenset(item.length_field_id for item in self.fields.values())
 
 
 ARRAY_LAYOUT_KEY = PluginKey("jbcgen.json.array-layout.v1", ArrayLayoutState)
 
 
-class ArrayLayoutPlugin:
+class ArrayLayoutPlugin(SchemaPluginBase[ArrayLayoutState]):
     key = ARRAY_LAYOUT_KEY
-
-    def annotation_commands(self) -> tuple[AnnotationCommandSpec, ...]:
-        return (
-            AnnotationCommandSpec(
-                "json",
-                (
-                    AnnotationArgumentSpec("type", AnnotationMode.VALUE),
-                    AnnotationArgumentSpec("len", AnnotationMode.VALUE),
-                ),
+    annotation_commands = (
+        AnnotationCommandSpec(
+            "json",
+            (
+                value_argument("type"),
+                value_argument("len"),
             ),
-            AnnotationCommandSpec(
-                "jsonStruct",
-                (
-                    AnnotationArgumentSpec("asarray", AnnotationMode.FLAG),
-                    AnnotationArgumentSpec("elems", AnnotationMode.VALUE),
-                    AnnotationArgumentSpec("len", AnnotationMode.VALUE),
-                    AnnotationArgumentSpec("cap", AnnotationMode.VALUE),
-                ),
+        ),
+        AnnotationCommandSpec(
+            "jsonStruct",
+            (
+                flag_argument("asarray"),
+                value_argument("elems"),
+                value_argument("len"),
+                value_argument("cap"),
             ),
-        )
-
-    def dependencies(self) -> tuple[PluginKey[object], ...]:
-        return ()
+        ),
+    )
 
     def build(self, context: PluginBuildContext) -> ArrayLayoutState:
         unit = context.unit
@@ -389,25 +347,25 @@ class ArrayLayoutPlugin:
         assert core is not None
         ast_records = {item.name: item for item in unit.records}
         types = core.type_map()
-        field_layouts: list[FieldArrayLayout] = []
-        record_layouts: list[RecordArrayLayout] = []
+        field_layouts: dict[str, FieldArrayLayout] = {}
+        record_layouts: dict[str, RecordArrayLayout] = {}
         for record in core.records:
             ast_record = ast_records[record.name]
             core_fields = {item.name: item for item in record.fields}
-            annotation = _annotation(ast_record.annotations, "jsonStruct", ast_record.location)
-            if annotation and annotation.arguments and not _flag(annotation, "asarray"):
+            annotation = find_annotation(ast_record.annotations, "jsonStruct", ast_record.location)
+            if annotation and annotation.arguments and not has_flag(annotation, "asarray"):
                 raise AnnotationError(
                     "parameterized @jsonStruct requires the asarray flag",
                     ast_record.location,
                 )
-            if _flag(annotation, "asarray"):
-                record_layouts.append(
-                    self._build_record_layout(ast_record, record.fields, types, annotation)
+            if has_flag(annotation, "asarray"):
+                record_layouts[record.id] = self._build_record_layout(
+                    ast_record, record.fields, types, annotation
                 )
             for ast_field in ast_record.fields:
-                json = _annotation(ast_field.annotations, "json", ast_field.location)
-                kind = _one(json, "type")
-                length_name = _one(json, "len")
+                json = find_annotation(ast_field.annotations, "json", ast_field.location)
+                kind = argument_value(json, "type")
+                length_name = argument_value(json, "len")
                 core_field = core_fields[ast_field.name]
                 core_type = types[core_field.type_id]
                 if kind is not None and kind != "array":
@@ -440,12 +398,12 @@ class ArrayLayoutPlugin:
                             ast_field.location,
                         )
                     self._validate_count_field(length, types, "array length")
-                    field_layouts.append(
-                        FieldArrayLayout(core_field.id, length.id, kind == "array")
+                    field_layouts[core_field.id] = FieldArrayLayout(
+                        length.id, kind == "array"
                     )
         return ArrayLayoutState(
-            tuple(sorted(field_layouts, key=lambda item: item.field_id)),
-            tuple(sorted(record_layouts, key=lambda item: item.record_id)),
+            frozen_map(field_layouts.items()),
+            frozen_map(record_layouts.items()),
         )
 
     def _build_record_layout(
@@ -455,12 +413,12 @@ class ArrayLayoutPlugin:
         types: dict[str, CoreTypeSchema],
         annotation: Annotation | None,
     ) -> RecordArrayLayout:
-        elems_name = _one(annotation, "elems")
+        elems_name = argument_value(annotation, "elems")
         if elems_name is None:
             raise AnnotationError("@jsonStruct(asarray) requires elems=<field>", ast_record.location)
         names = {item.name: item for item in fields}
-        length_name = _one(annotation, "len")
-        capacity_name = _one(annotation, "cap")
+        length_name = argument_value(annotation, "len")
+        capacity_name = argument_value(annotation, "cap")
         references = [item for item in (elems_name, length_name, capacity_name) if item]
         if len(references) != len(set(references)):
             raise AnnotationError(
@@ -488,7 +446,6 @@ class ArrayLayoutPlugin:
             self._validate_count_field(capacity, types, "array record cap")
         storage = {item.id for item in (elems, length, capacity) if item is not None}
         return RecordArrayLayout(
-            f"record:{ast_record.name}",
             elems.id,
             elems_type.target,
             length.id if length else None,
@@ -514,9 +471,9 @@ class ArrayLayoutPlugin:
         binding = plugins.get(BINDING_KEY)
         if binding is None:
             return
-        bindings = binding.field_map()
+        bindings = binding.fields
         metadata = state.metadata_field_ids()
-        array_records = set(state.record_map())
+        array_records = set(state.records)
         fields = core.field_map()
         for field_id in metadata:
             if bindings[field_id].required:
@@ -535,13 +492,13 @@ class ArrayLayoutPlugin:
 
     def format_state(self, state: ArrayLayoutState) -> str:
         lines = [
-            f"{item.field_id} len={item.length_field_id} "
+            f"{field_id} len={item.length_field_id} "
             f"kind={'dynamic' if item.dynamic else 'fixed'}"
-            for item in state.fields
+            for field_id, item in state.fields.items()
         ]
-        for item in state.records:
+        for record_id, item in state.records.items():
             parts = [
-                f"{item.record_id}",
+                record_id,
                 f"elems={item.elems_field_id}",
                 f"element={item.element_type_id}",
             ]
