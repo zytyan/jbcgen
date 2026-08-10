@@ -1,6 +1,8 @@
 from .annotations import Annotation, AnnotationArgument, parse_annotations
 from .clang_frontend import AstType, AstTypeKind, ClangFrontend, TranslationUnit
-from .schema_ir import SchemaIR, build_schema_ir, format_schema_ir
+from .schema_core import CoreSchemaIR
+from .schema_ir import SchemaIR, build_schema_ir, builtin_plugins, format_schema_ir
+from .schema_plugins import PluginKey, PluginSet, SchemaPlugin
 from .plan_ir import (
     DecodePlan,
     ReleasePlan,
@@ -19,7 +21,12 @@ __all__ = [
     "AstTypeKind",
     "TranslationUnit",
     "SchemaIR",
+    "CoreSchemaIR",
+    "PluginKey",
+    "PluginSet",
+    "SchemaPlugin",
     "build_schema_ir",
+    "builtin_plugins",
     "format_schema_ir",
     "DecodePlan",
     "ReleasePlan",

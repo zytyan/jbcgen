@@ -11,15 +11,29 @@ Clang JSON AST + documentation comments
   structured frontend AST (`AstType` tree)
                │
                ▼
-           Schema IR
+     Core Schema IR + PluginSet
             ├── Decode Plan  ── C decoder
             ├── Release Plan ── C cleanup
             └── Encode Plan  ── future
 ```
 
-Clang frontend 负责 typedef 展开以及基础类型、enum、record、指针和数组的结构化解析。传入 SchemaBuilder 的字段和函数签名已经是不可变的 `AstType` 树；Schema 层只做 JSON 语义映射、约束和所有权分析，不再解析 `qualType` 字符串。
+Clang frontend 负责 typedef 展开以及基础类型、enum、record、指针和数组的结构化解析。传入 Schema Builder 的字段和函数签名已经是不可变的 `AstType` 树；Schema 层不再解析 `qualType` 字符串。
 
-Schema IR 不包含执行步骤。Decode Plan 与 Release Plan 独立从 Schema 构建，只通过稳定 Type ID 引用类型。三种现有 IR 都能打印为确定性、人类可读的调试文本；该文本不是序列化协议，不能反向解析。
+`SchemaIR` 由 `CoreSchemaIR` 和不可变的 `PluginSet` 组成。Core 仅包含 C 类型、record、field、function、声明关系和源码位置；Field ID 固定为 `field:<record>.<field>`。Core 不包含 key、required、flatten、约束、动态数组、record shape、所有权或 `omitempty`。
+
+内建插件按职责保存额外语义：
+
+- `jbcgen.json.entrypoints.v1`：公开结构体及 decode/cleanup 函数角色。
+- `jbcgen.json.binding.v1`：key、altkey、required 和 flatten。
+- `jbcgen.json.array-layout.v1`：动态/固定数组计数字段及 array-record 存储布局。
+- `jbcgen.json.value-types.v1`：从 Core 类型和数组布局派生 JSON 值类型与 object/array shape。
+- `jbcgen.json.constraints.v1`：数值和长度约束。
+- `jbcgen.json.ownership.v1`：固定点资源所有权分析。
+- `jbcgen.json.encode-hints.v1`：当前仅保存 `omitempty`。
+
+`PluginKey[T]` 同时携带稳定 plugin ID 和状态类型；`PluginSet.get/require` 会检查类型，状态始终按 plugin ID 排序。插件声明自己的注解参数和真实构建依赖；注册表负责未知参数、flag/value 形式及重复策略，注解 parser 本身只解析语法。`builtin_plugins()` 可用于在进程内追加实验性插件；本阶段不从仓库外自动加载插件，也不承诺第三方 API/ABI 稳定。
+
+Schema IR 不包含执行步骤。Decode Plan 从 Core、Binding、Array Layout、Value Types 和 Constraints 构建；Release Plan 独立从 Core、Array Layout、Value Types 和 Ownership 构建。两者只通过稳定 ID 关联。Schema、Decode Plan 和 Release Plan 均能打印为确定性、人类可读的调试文本；打印结果不是序列化协议，不能反向解析，也不承诺跨版本逐字兼容。
 
 ## CLI
 
@@ -57,7 +71,7 @@ PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
 - `type=array, len=countField`：将 `T *` 解释为动态数组。
 - `len=countField`：为固定数组保存实际元素数。
 - `flatten`：将值结构体字段展开到父对象；不能与 `required` 组合。
-- `omitempty`：保存在 Schema 中，当前 decoder 不使用。
+- `omitempty`：保存在 Encode Hints Plugin 中，当前 decoder 不使用。
 
 未知参数、重复的单值参数、不适用的参数组合和 JSON key 冲突都会在生成期报错。动态数组的伴随长度字段不作为独立 JSON key。
 

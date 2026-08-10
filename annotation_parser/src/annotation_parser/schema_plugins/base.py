@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Generic, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast
 
 from ..annotations import Annotation
 from ..diagnostics import AnnotationError
+
+if TYPE_CHECKING:
+    from ..clang_frontend import TranslationUnit
+    from ..schema_core import CoreSchemaIR
 
 
 class PluginError(ValueError):
@@ -109,7 +113,7 @@ class AnnotationRegistry:
         }
 
     @classmethod
-    def from_plugins(cls, plugins: tuple[SchemaPlugin, ...]) -> AnnotationRegistry:
+    def from_plugins(cls, plugins: tuple[SchemaPlugin[object], ...]) -> AnnotationRegistry:
         return cls(
             tuple(
                 (plugin.key.id, command)
@@ -151,9 +155,29 @@ class AnnotationRegistry:
             seen.add(argument.name)
 
 
-class SchemaPlugin(Protocol):
-    key: PluginKey[object]
+@dataclass(frozen=True)
+class PluginBuildContext:
+    unit: TranslationUnit
+    core: CoreSchemaIR | None
+    states: PluginSet
+
+
+@dataclass(frozen=True)
+class PluginValidationContext:
+    unit: TranslationUnit
+    core: CoreSchemaIR
+    states: PluginSet
+
+
+class SchemaPlugin(Protocol[StateT]):
+    key: PluginKey[StateT]
 
     def annotation_commands(self) -> tuple[AnnotationCommandSpec, ...]: ...
 
-    def format_state(self, state: object) -> str: ...
+    def dependencies(self) -> tuple[PluginKey[object], ...]: ...
+
+    def build(self, context: PluginBuildContext) -> StateT: ...
+
+    def validate(self, context: PluginValidationContext, state: StateT) -> None: ...
+
+    def format_state(self, state: StateT) -> str: ...

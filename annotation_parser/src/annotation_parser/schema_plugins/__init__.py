@@ -4,8 +4,10 @@ from .base import (
     AnnotationMode,
     AnnotationRegistry,
     PluginError,
+    PluginBuildContext,
     PluginKey,
     PluginSet,
+    PluginValidationContext,
     SchemaPlugin,
 )
 from .builtin import (
@@ -60,8 +62,10 @@ __all__ = [
     "EntrypointsPlugin",
     "EntrypointsState",
     "PluginError",
+    "PluginBuildContext",
     "PluginKey",
     "PluginSet",
+    "PluginValidationContext",
     "JsonValueKind",
     "JsonValueType",
     "JsonValueTypesPlugin",

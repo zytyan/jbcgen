@@ -52,6 +52,8 @@ class CliTest(unittest.TestCase):
             )
             self.assertEqual(result, 0, diagnostics.getvalue())
             self.assertIn("SchemaIR", diagnostics.getvalue())
+            self.assertIn("  core", diagnostics.getvalue())
+            self.assertIn("plugin jbcgen.json.binding.v1", diagnostics.getvalue())
             self.assertIn("DecodePlan", diagnostics.getvalue())
             self.assertIn("ReleasePlan", diagnostics.getvalue())
             self.assertIn("bool decodeValue", output.read_text(encoding="utf-8"))

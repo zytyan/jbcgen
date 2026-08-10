@@ -4,7 +4,6 @@ import json
 import re
 from dataclasses import dataclass
 
-from .diagnostics import AnnotationError
 from .plan_ir import (
     DecodeArrayPlan,
     DecodeFieldPlan,

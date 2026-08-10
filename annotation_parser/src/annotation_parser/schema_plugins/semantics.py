@@ -5,15 +5,16 @@ from decimal import Decimal, InvalidOperation
 from enum import Enum
 
 from ..annotations import Annotation
-from ..clang_frontend import AstField, TranslationUnit
+from ..clang_frontend import AstField
 from ..diagnostics import AnnotationError, SourceLocation
-from ..schema_core import CoreSchemaIR, CoreTypeKind
+from ..schema_core import CoreTypeKind
 from .base import (
     AnnotationArgumentSpec,
     AnnotationCommandSpec,
     AnnotationMode,
+    PluginBuildContext,
     PluginKey,
-    PluginSet,
+    PluginValidationContext,
 )
 from .builtin import ARRAY_LAYOUT_KEY, ArrayLayoutState
 
@@ -113,7 +114,13 @@ class JsonValueTypesPlugin:
     def annotation_commands(self) -> tuple[AnnotationCommandSpec, ...]:
         return ()
 
-    def build(self, core: CoreSchemaIR, plugins: PluginSet) -> JsonValueTypesState:
+    def dependencies(self) -> tuple[PluginKey[object], ...]:
+        return (ARRAY_LAYOUT_KEY,)
+
+    def build(self, context: PluginBuildContext) -> JsonValueTypesState:
+        core = context.core
+        assert core is not None
+        plugins = context.states
         arrays = plugins.require(ARRAY_LAYOUT_KEY)
         core_types = core.type_map()
         result: dict[str, JsonValueType] = {}
@@ -228,6 +235,11 @@ class JsonValueTypesPlugin:
             records,
         )
 
+    def validate(
+        self, context: PluginValidationContext, state: JsonValueTypesState
+    ) -> None:
+        return
+
     def format_state(self, state: JsonValueTypesState) -> str:
         lines = [
             f"type {item.id} kind={item.kind.value}"
@@ -276,9 +288,14 @@ class ConstraintsPlugin:
             ),
         )
 
-    def build(
-        self, unit: TranslationUnit, core: CoreSchemaIR, plugins: PluginSet
-    ) -> ConstraintsState:
+    def dependencies(self) -> tuple[PluginKey[object], ...]:
+        return (VALUE_TYPES_KEY,)
+
+    def build(self, context: PluginBuildContext) -> ConstraintsState:
+        unit = context.unit
+        core = context.core
+        assert core is not None
+        plugins = context.states
         values = plugins.require(VALUE_TYPES_KEY)
         field_types = values.field_map()
         types = values.type_map()
@@ -327,6 +344,11 @@ class ConstraintsPlugin:
                     )
                 )
         return ConstraintsState(tuple(sorted(result, key=lambda item: item.field_id)))
+
+    def validate(
+        self, context: PluginValidationContext, state: ConstraintsState
+    ) -> None:
+        return
 
     def _length(
         self, annotation: Annotation | None, name: str, field: AstField
@@ -393,7 +415,13 @@ class OwnershipPlugin:
     def annotation_commands(self) -> tuple[AnnotationCommandSpec, ...]:
         return ()
 
-    def build(self, core: CoreSchemaIR, plugins: PluginSet) -> OwnershipState:
+    def dependencies(self) -> tuple[PluginKey[object], ...]:
+        return (VALUE_TYPES_KEY, ARRAY_LAYOUT_KEY)
+
+    def build(self, context: PluginBuildContext) -> OwnershipState:
+        core = context.core
+        assert core is not None
+        plugins = context.states
         values = plugins.require(VALUE_TYPES_KEY)
         arrays = plugins.require(ARRAY_LAYOUT_KEY)
         types = values.type_map()
@@ -465,6 +493,11 @@ class OwnershipPlugin:
             ),
         )
 
+    def validate(
+        self, context: PluginValidationContext, state: OwnershipState
+    ) -> None:
+        return
+
     def format_state(self, state: OwnershipState) -> str:
         lines = [
             f"record {item.record_id} owns={str(item.owns_resources).lower()}"
@@ -495,7 +528,13 @@ class EncodeHintsPlugin:
             ),
         )
 
-    def build(self, unit: TranslationUnit, core: CoreSchemaIR) -> EncodeHintsState:
+    def dependencies(self) -> tuple[PluginKey[object], ...]:
+        return ()
+
+    def build(self, context: PluginBuildContext) -> EncodeHintsState:
+        unit = context.unit
+        core = context.core
+        assert core is not None
         reachable = core.field_map()
         fields = []
         for record in unit.records:
@@ -507,6 +546,11 @@ class EncodeHintsPlugin:
                 if _flag(annotation, "omitempty"):
                     fields.append(field_id)
         return EncodeHintsState(tuple(sorted(fields)))
+
+    def validate(
+        self, context: PluginValidationContext, state: EncodeHintsState
+    ) -> None:
+        return
 
     def format_state(self, state: EncodeHintsState) -> str:
         return "\n".join(f"omitempty {item}" for item in state.omitempty_field_ids)

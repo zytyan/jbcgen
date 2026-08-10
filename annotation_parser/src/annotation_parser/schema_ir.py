@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from .clang_frontend import TranslationUnit
-from .diagnostics import AnnotationError
 from .schema_core import CoreSchemaIR, build_core_schema, format_core_schema
 from .schema_plugins import (
     ARRAY_LAYOUT_KEY,
@@ -23,8 +23,12 @@ from .schema_plugins import (
     JsonValueType,
     JsonValueTypesPlugin,
     OwnershipPlugin,
+    PluginBuildContext,
+    PluginError,
     PluginSet,
+    PluginValidationContext,
     RecordShape,
+    SchemaPlugin,
 )
 
 
@@ -40,7 +44,7 @@ class SchemaIR:
     plugins: PluginSet
 
 
-def _builtin_plugins() -> tuple[object, ...]:
+def builtin_plugins() -> tuple[SchemaPlugin[Any], ...]:
     return (
         EntrypointsPlugin(),
         BindingPlugin(),
@@ -52,8 +56,10 @@ def _builtin_plugins() -> tuple[object, ...]:
     )
 
 
-def _validate_annotations(unit: TranslationUnit, plugins: tuple[object, ...]) -> None:
-    registry = AnnotationRegistry.from_plugins(plugins)  # type: ignore[arg-type]
+def _validate_annotations(
+    unit: TranslationUnit, plugins: tuple[SchemaPlugin[Any], ...]
+) -> None:
+    registry = AnnotationRegistry.from_plugins(plugins)
     annotations = []
     for record in unit.records:
         annotations.extend(record.annotations)
@@ -65,81 +71,65 @@ def _validate_annotations(unit: TranslationUnit, plugins: tuple[object, ...]) ->
         registry.validate(annotation)
 
 
-def build_schema_ir(unit: TranslationUnit) -> SchemaIR:
-    builtin = _builtin_plugins()
-    _validate_annotations(unit, builtin)
+def build_schema_ir(
+    unit: TranslationUnit,
+    plugins: tuple[SchemaPlugin[Any], ...] | None = None,
+) -> SchemaIR:
+    registered = builtin_plugins() if plugins is None else plugins
+    by_id: dict[str, SchemaPlugin[Any]] = {}
+    for plugin in registered:
+        if plugin.key.id in by_id:
+            raise PluginError(f"duplicate plugin ID {plugin.key.id!r}")
+        by_id[plugin.key.id] = plugin
+    _validate_annotations(unit, registered)
 
-    entry_plugin = builtin[0]
-    assert isinstance(entry_plugin, EntrypointsPlugin)
-    entrypoints = entry_plugin.discover(unit)
+    entry_plugin = by_id.get(ENTRYPOINTS_KEY.id)
+    if entry_plugin is None or entry_plugin.key.state_type is not ENTRYPOINTS_KEY.state_type:
+        raise PluginError(f"required plugin {ENTRYPOINTS_KEY.id!r} is missing")
+    entrypoints = entry_plugin.build(PluginBuildContext(unit, None, PluginSet()))
     core = build_core_schema(
         unit, entrypoints.root_record_names(), entrypoints.function_names()
     )
-
-    binding_plugin = builtin[1]
-    array_plugin = builtin[2]
-    value_plugin = builtin[3]
-    constraints_plugin = builtin[4]
-    ownership_plugin = builtin[5]
-    encode_plugin = builtin[6]
-    assert isinstance(binding_plugin, BindingPlugin)
-    assert isinstance(array_plugin, ArrayLayoutPlugin)
-    assert isinstance(value_plugin, JsonValueTypesPlugin)
-    assert isinstance(constraints_plugin, ConstraintsPlugin)
-    assert isinstance(ownership_plugin, OwnershipPlugin)
-    assert isinstance(encode_plugin, EncodeHintsPlugin)
-
-    binding = binding_plugin.build(unit, core)
-    arrays = array_plugin.build(unit, core)
-    partial = PluginSet(
-        ((ENTRYPOINTS_KEY, entrypoints), (BINDING_KEY, binding), (ARRAY_LAYOUT_KEY, arrays))
-    )
-    values = value_plugin.build(core, partial)
-    with_values = PluginSet(
-        (
-            (ENTRYPOINTS_KEY, entrypoints),
-            (BINDING_KEY, binding),
-            (ARRAY_LAYOUT_KEY, arrays),
-            (VALUE_TYPES_KEY, values),
-        )
-    )
-    constraints = constraints_plugin.build(unit, core, with_values)
-    ownership = ownership_plugin.build(core, with_values)
-    encode_hints = encode_plugin.build(unit, core)
-    plugins = PluginSet(
-        (
-            (ENTRYPOINTS_KEY, entrypoints),
-            (BINDING_KEY, binding),
-            (ARRAY_LAYOUT_KEY, arrays),
-            (VALUE_TYPES_KEY, values),
-            (CONSTRAINTS_KEY, constraints),
-            (OWNERSHIP_KEY, ownership),
-            (ENCODE_HINTS_KEY, encode_hints),
-        )
-    )
-
-    entry_plugin.validate(unit, entrypoints)
-    binding_plugin.validate(core, plugins)
-    array_plugin.validate(core, plugins)
-    _validate_cross_plugin_rules(unit, core, plugins)
-    return SchemaIR(core, plugins)
-
-
-def _validate_cross_plugin_rules(
-    unit: TranslationUnit, core: CoreSchemaIR, plugins: PluginSet
-) -> None:
-    bindings = plugins.require(BINDING_KEY).field_map()
-    arrays = plugins.require(ARRAY_LAYOUT_KEY).field_map()
-    constraints = plugins.require(CONSTRAINTS_KEY).field_map()
-    fields = core.field_map()
-    for binding in bindings.values():
-        if not binding.flatten:
-            continue
-        field = fields[binding.field_id]
-        if binding.explicit_key or binding.field_id in arrays or binding.field_id in constraints:
-            raise AnnotationError(
-                "flatten cannot be combined with key, len, or constraints", field.location
+    values: list[tuple[Any, object]] = [(ENTRYPOINTS_KEY, entrypoints)]
+    complete = {ENTRYPOINTS_KEY.id}
+    remaining = {
+        plugin_id: plugin
+        for plugin_id, plugin in by_id.items()
+        if plugin_id != ENTRYPOINTS_KEY.id
+    }
+    while remaining:
+        ready = [
+            plugin
+            for plugin in remaining.values()
+            if all(dependency.id in complete for dependency in plugin.dependencies())
+        ]
+        if not ready:
+            missing = sorted(
+                {
+                    dependency.id
+                    for plugin in remaining.values()
+                    for dependency in plugin.dependencies()
+                    if dependency.id not in by_id
+                }
             )
+            if missing:
+                raise PluginError(
+                    "missing plugin dependencies: " + ", ".join(missing)
+                )
+            unresolved = ", ".join(sorted(remaining))
+            raise PluginError(f"plugin dependency cycle: {unresolved}")
+        plugin = min(ready, key=lambda item: item.key.id)
+        states = PluginSet(tuple(values))
+        state = plugin.build(PluginBuildContext(unit, core, states))
+        values.append((plugin.key, state))
+        complete.add(plugin.key.id)
+        del remaining[plugin.key.id]
+
+    states = PluginSet(tuple(values))
+    validation = PluginValidationContext(unit, core, states)
+    for plugin in sorted(registered, key=lambda item: item.key.id):
+        plugin.validate(validation, states.require(plugin.key))
+    return SchemaIR(core, states)
 
 
 def format_schema_ir(schema: SchemaIR) -> str:
@@ -157,6 +147,7 @@ def format_schema_ir(schema: SchemaIR) -> str:
     lines.append("  plugins")
     for entry in schema.plugins.entries:
         lines.append(f"    plugin {entry.id}")
-        rendered = formatters[entry.id](entry.state)
+        formatter = formatters.get(entry.id)
+        rendered = formatter(entry.state) if formatter else repr(entry.state)
         lines.extend(f"      {line}" for line in rendered.splitlines())
     return "\n".join(lines)

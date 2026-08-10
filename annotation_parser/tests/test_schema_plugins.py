@@ -6,9 +6,15 @@ from annotation_parser.annotations import Annotation, AnnotationArgument, parse_
 from annotation_parser.clang_frontend import AstField, AstRecord, TranslationUnit, parse_type_spelling
 from annotation_parser.diagnostics import AnnotationError, SourceLocation
 from annotation_parser.schema_core import build_core_schema
+from annotation_parser.schema_ir import builtin_plugins, build_schema_ir, format_schema_ir
 from annotation_parser.schema_plugins import (
     ARRAY_LAYOUT_KEY,
     BINDING_KEY,
+    CONSTRAINTS_KEY,
+    ENCODE_HINTS_KEY,
+    ENTRYPOINTS_KEY,
+    OWNERSHIP_KEY,
+    VALUE_TYPES_KEY,
     AnnotationArgumentSpec,
     AnnotationCommandSpec,
     AnnotationMode,
@@ -17,8 +23,10 @@ from annotation_parser.schema_plugins import (
     BindingPlugin,
     EntrypointsPlugin,
     PluginError,
+    PluginBuildContext,
     PluginKey,
     PluginSet,
+    PluginValidationContext,
 )
 
 
@@ -40,6 +48,37 @@ class FakePlugin:
 
     def format_state(self, state: object) -> str:
         return repr(state)
+
+
+@dataclass(frozen=True)
+class ExtensionState:
+    field_ids: tuple[str, ...]
+
+
+EXTENSION_KEY = PluginKey("example.extension.v1", ExtensionState)
+
+
+class ExtensionPlugin:
+    key = EXTENSION_KEY
+
+    def annotation_commands(self) -> tuple[AnnotationCommandSpec, ...]:
+        return ()
+
+    def dependencies(self) -> tuple[PluginKey[object], ...]:
+        return (BINDING_KEY,)
+
+    def build(self, context: PluginBuildContext) -> ExtensionState:
+        binding = context.states.require(BINDING_KEY)
+        return ExtensionState(tuple(item.field_id for item in binding.fields))
+
+    def validate(
+        self, context: PluginValidationContext, state: ExtensionState
+    ) -> None:
+        if context.core is None or not state.field_ids:
+            raise AssertionError("extension received an incomplete build context")
+
+    def format_state(self, state: ExtensionState) -> str:
+        return "\n".join(state.field_ids)
 
 
 def make_field(name: str, c_type: str, annotation: str = "") -> AstField:
@@ -141,11 +180,13 @@ class BuiltinPluginTest(unittest.TestCase):
         unit = TranslationUnit(Path("input.h"), (vector, root), (), (), ())
         entrypoints = EntrypointsPlugin().discover(unit)
         core = build_core_schema(unit, entrypoints.root_record_names(), ())
-        binding = BindingPlugin().build(unit, core)
-        arrays = ArrayLayoutPlugin().build(unit, core)
+        empty = PluginSet()
+        binding = BindingPlugin().build(PluginBuildContext(unit, core, empty))
+        arrays = ArrayLayoutPlugin().build(PluginBuildContext(unit, core, empty))
         plugins = PluginSet(((BINDING_KEY, binding), (ARRAY_LAYOUT_KEY, arrays)))
-        BindingPlugin().validate(core, plugins)
-        ArrayLayoutPlugin().validate(core, plugins)
+        validation = PluginValidationContext(unit, core, plugins)
+        BindingPlugin().validate(validation, binding)
+        ArrayLayoutPlugin().validate(validation, arrays)
 
         values = binding.field_map()["field:Root.values"]
         self.assertEqual(values.key, "items")
@@ -158,6 +199,86 @@ class BuiltinPluginTest(unittest.TestCase):
         self.assertEqual(vec.length_field_id, "field:Vec.len")
         self.assertEqual(vec.capacity_field_id, "field:Vec.cap")
         self.assertEqual(vec.ignored_field_ids, ("field:Vec.reserved",))
+
+    def test_all_builtin_states_are_independent_and_dumped_by_plugin_id(self) -> None:
+        root = AstRecord(
+            "clang-root",
+            "Root",
+            (
+                make_field("name", "char *", "@json(required, minlen=0, maxlen=8, omitempty)"),
+                make_field("score", "int", "@json(min=1, max=9)"),
+            ),
+            parse_annotations("@jsonStruct", LOCATION),
+            LOCATION,
+        )
+        unit = TranslationUnit(Path("input.h"), (root,), (), (), ())
+        schema = build_schema_ir(unit)
+        ids = tuple(entry.id for entry in schema.plugins.entries)
+        self.assertEqual(ids, tuple(sorted(ids)))
+        self.assertEqual(
+            set(ids),
+            {
+                ENTRYPOINTS_KEY.id,
+                BINDING_KEY.id,
+                ARRAY_LAYOUT_KEY.id,
+                VALUE_TYPES_KEY.id,
+                CONSTRAINTS_KEY.id,
+                OWNERSHIP_KEY.id,
+                ENCODE_HINTS_KEY.id,
+            },
+        )
+        self.assertEqual(
+            schema.plugins.require(ENCODE_HINTS_KEY).omitempty_field_ids,
+            ("field:Root.name",),
+        )
+        self.assertTrue(
+            schema.plugins.require(OWNERSHIP_KEY).field_map()["field:Root.name"]
+        )
+        constraint = schema.plugins.require(CONSTRAINTS_KEY).field_map()
+        self.assertEqual(constraint["field:Root.name"].max_length, 8)
+        self.assertEqual(constraint["field:Root.score"].minimum, "1")
+        rendered = format_schema_ir(schema)
+        self.assertTrue(rendered.startswith("SchemaIR\n  core\n"))
+        offsets = [rendered.index(f"plugin {plugin_id}") for plugin_id in ids]
+        self.assertEqual(offsets, sorted(offsets))
+
+    def test_custom_plugin_uses_declared_dependency_and_stable_core_ids(self) -> None:
+        root = AstRecord(
+            "clang-root",
+            "Root",
+            (make_field("value", "int"),),
+            parse_annotations("@jsonStruct", LOCATION),
+            LOCATION,
+        )
+        unit = TranslationUnit(Path("input.h"), (root,), (), (), ())
+        schema = build_schema_ir(unit, (*builtin_plugins(), ExtensionPlugin()))
+        self.assertEqual(
+            schema.plugins.require(EXTENSION_KEY).field_ids, ("field:Root.value",)
+        )
+        self.assertIn("plugin example.extension.v1", format_schema_ir(schema))
+        with self.assertRaisesRegex(PluginError, "missing plugin dependencies"):
+            build_schema_ir(unit, (EntrypointsPlugin(), ExtensionPlugin()))
+
+    def test_builtin_registry_owns_annotation_semantics(self) -> None:
+        cases = (
+            ("@json(requried)", "unknown @json argument"),
+            ("@json(key=a, key=b)", "duplicate @json argument"),
+            ("@json(required=yes)", "is a flag"),
+        )
+        for annotation, message in cases:
+            root = AstRecord(
+                "clang-root",
+                "Root",
+                (make_field("value", "int", annotation),),
+                parse_annotations("@jsonStruct", LOCATION),
+                LOCATION,
+            )
+            with self.subTest(annotation=annotation), self.assertRaisesRegex(
+                AnnotationError, message
+            ):
+                build_schema_ir(
+                    TranslationUnit(Path("input.h"), (root,), (), (), ())
+                )
 
 
 if __name__ == "__main__":

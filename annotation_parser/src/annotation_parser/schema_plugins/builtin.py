@@ -5,13 +5,14 @@ from dataclasses import dataclass
 from ..annotations import Annotation
 from ..clang_frontend import AstField, AstRecord, AstTypeKind, TranslationUnit
 from ..diagnostics import AnnotationError, SourceLocation
-from ..schema_core import CoreFieldSchema, CoreSchemaIR, CoreTypeKind, CoreTypeSchema
+from ..schema_core import CoreFieldSchema, CoreTypeKind, CoreTypeSchema
 from .base import (
     AnnotationArgumentSpec,
     AnnotationCommandSpec,
     AnnotationMode,
+    PluginBuildContext,
     PluginKey,
-    PluginSet,
+    PluginValidationContext,
 )
 
 
@@ -75,6 +76,12 @@ class EntrypointsPlugin:
             AnnotationCommandSpec("jsonCleanup"),
         )
 
+    def dependencies(self) -> tuple[PluginKey[object], ...]:
+        return ()
+
+    def build(self, context: PluginBuildContext) -> EntrypointsState:
+        return self.discover(context.unit)
+
     def discover(self, unit: TranslationUnit) -> EntrypointsState:
         public_records: list[str] = []
         for record in unit.records:
@@ -88,8 +95,8 @@ class EntrypointsPlugin:
                 if _annotation(function.annotations, role, function.location) is None:
                     continue
                 record_id = None
-                for parameter in reversed(function.parameters):
-                    item = parameter.type
+                if len(function.parameters) >= 2:
+                    item = function.parameters[1].type
                     if (
                         item.kind is AstTypeKind.POINTER
                         and item.target is not None
@@ -97,7 +104,6 @@ class EntrypointsPlugin:
                         and item.target.name in records
                     ):
                         record_id = f"record:{item.target.name}"
-                        break
                 functions.append(
                     FunctionEntrypoint(f"function:{function.name}", role, record_id)
                 )
@@ -106,7 +112,10 @@ class EntrypointsPlugin:
             tuple(sorted(functions, key=lambda item: (item.role, item.function_id))),
         )
 
-    def validate(self, unit: TranslationUnit, state: EntrypointsState) -> None:
+    def validate(
+        self, context: PluginValidationContext, state: EntrypointsState
+    ) -> None:
+        unit = context.unit
         functions = {f"function:{item.name}": item for item in unit.functions}
         public = set(state.public_record_ids)
         cleanups = {
@@ -197,7 +206,13 @@ class BindingPlugin:
             ),
         )
 
-    def build(self, unit: TranslationUnit, core: CoreSchemaIR) -> BindingState:
+    def dependencies(self) -> tuple[PluginKey[object], ...]:
+        return ()
+
+    def build(self, context: PluginBuildContext) -> BindingState:
+        unit = context.unit
+        core = context.core
+        assert core is not None
         ast_records = {item.name: item for item in unit.records}
         bindings: list[FieldBinding] = []
         for record in core.records:
@@ -221,8 +236,15 @@ class BindingPlugin:
                 )
         return BindingState(tuple(sorted(bindings, key=lambda item: item.field_id)))
 
-    def validate(self, core: CoreSchemaIR, plugins: PluginSet) -> None:
-        state = plugins.require(BINDING_KEY)
+    def validate(
+        self, context: PluginValidationContext, state: BindingState
+    ) -> None:
+        # Imported lazily because Value/Constraints plugins derive from the
+        # structural states defined in this module.
+        from .semantics import CONSTRAINTS_KEY
+
+        core = context.core
+        plugins = context.states
         bindings = state.field_map()
         types = core.type_map()
         records = core.record_map()
@@ -247,6 +269,22 @@ class BindingPlugin:
             if array_layout
             else set()
         )
+        constraint_state = plugins.get(CONSTRAINTS_KEY)
+        constraints = constraint_state.field_map() if constraint_state else {}
+        array_fields = array_layout.field_map() if array_layout else {}
+        for binding in bindings.values():
+            if not binding.flatten:
+                continue
+            field = core.field_map()[binding.field_id]
+            if (
+                binding.explicit_key
+                or binding.field_id in array_fields
+                or binding.field_id in constraints
+            ):
+                raise AnnotationError(
+                    "flatten cannot be combined with key, len, or constraints",
+                    field.location,
+                )
 
         def add_record(record_id: str, keys: dict[str, str], prefix: str) -> None:
             for field in records[record_id].fields:
@@ -342,7 +380,13 @@ class ArrayLayoutPlugin:
             ),
         )
 
-    def build(self, unit: TranslationUnit, core: CoreSchemaIR) -> ArrayLayoutState:
+    def dependencies(self) -> tuple[PluginKey[object], ...]:
+        return ()
+
+    def build(self, context: PluginBuildContext) -> ArrayLayoutState:
+        unit = context.unit
+        core = context.core
+        assert core is not None
         ast_records = {item.name: item for item in unit.records}
         types = core.type_map()
         field_layouts: list[FieldArrayLayout] = []
@@ -462,8 +506,11 @@ class ArrayLayoutPlugin:
         ):
             raise AnnotationError(f"{role} field must be an unsigned integer", field.location)
 
-    def validate(self, core: CoreSchemaIR, plugins: PluginSet) -> None:
-        state = plugins.require(ARRAY_LAYOUT_KEY)
+    def validate(
+        self, context: PluginValidationContext, state: ArrayLayoutState
+    ) -> None:
+        core = context.core
+        plugins = context.states
         binding = plugins.get(BINDING_KEY)
         if binding is None:
             return

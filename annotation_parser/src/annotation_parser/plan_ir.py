@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .schema_core import CoreFieldSchema, CoreRecordSchema
-from .schema_ir import RecordShape, SchemaIR, TypeKind
+from .schema_ir import SchemaIR, TypeKind
 from .schema_plugins import (
     ARRAY_LAYOUT_KEY,
     BINDING_KEY,
