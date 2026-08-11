@@ -1,92 +1,368 @@
 # jbcgen
 
-从 C 结构体和文档注释生成 C11 JSON 反射描述符，以及基于描述符的解码与资源释放 API。
+`jbcgen` 从 C 类型声明和文档注释生成 C11 JSON 反射描述符、decoder 包装函数和 cleanup 包装函数。生成代码把类型布局描述为 `static const` 数据，通用解码、释放和失败回滚由 `json_reflect_api` runtime 执行。
 
+当前只实现 JSON decode/release，不提供 encoder 或 writer。
 
-## 快速开始
+## 依赖与安装
 
-头文件在结构体和函数声明上使用文档注释：
+- Python 3.13
+- Clang
+- CMake 3.14 及以上
+- C11 编译器
+- 64 位 LP64 数据模型
 
-```c
-/// @jsonStruct
-typedef struct User {
-  /// @json(key=id, altkey=user-id, required)
-  uint32_t id;
-  /// @json(type=array, len=itemCount)
-  Item *items;
-  size_t itemCount;
-} User;
-
-/// 将结构体本身映射为 JSON 数组；匿名 typedef 同样支持
-/// @jsonStruct(asarray, elems=elems, len=len, cap=cap)
-typedef struct {
-  Item *elems;
-  size_t len;
-  size_t cap;
-} ItemVec;
-
-/// @jsonDecode
-bool decodeUser(json_parser *parser, User *user);
-
-/// @jsonCleanup
-void releaseUser(json_allocator *allocator, User *user);
-```
-
-生成 C 源码：
+从源码运行 generator：
 
 ```sh
 cd annotation_parser
-PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
-  -o example_json.c --include example/example.h -- -I ../runtime
+PYTHONPATH=src python3 -m annotation_parser --help
 ```
 
-可用 `-c compile_commands.json`（或传入其所在目录）复用项目的 Clang 编译选项；`--` 后的显式参数会在数据库参数之后追加。
-
-使用 `--dump-ir schema|plan|all` 可将只读调试文本输出到 stderr。生成文件头记录来源头文件和其 SHA-256；生成结果未变化时不会重写输出文件。
-
-数组容器的 `elems` 必须指定，`len`、`cap` 可独立省略。JSON `[]` 不申请元素缓冲区，结果为 `elems == NULL` 且已有计数字段为 0；`cap` 保存实际可用元素容量。
-
-## 架构
-
-Clang frontend 先把 JSON AST 中的 C 类型解析为不可变的 `AstType` 树；后续层不再解析 `qualType` 字符串。Schema 直接保存 C 类型图、JSON 字段语义、数组布局、约束、所有权、入口函数和源码位置。
-
-```text
-Clang Frontend AstType
-          │
-          ▼
-          Schema
-             │
-      validate_schema
-             │
-             ▼
-       GeneratePlan
-             │
-             ▼
-    C reflection descriptors
-             │
-             ▼
-  Runtime generic decode/release
-```
-
-每个 `TypePlan` 保存描述符名称、字段路径、排序后的 key 表、物理资源字段和类型依赖。Decode 与 release 使用同一个类型描述符；失败路径直接调用通用 reflection release，不再维护互相重复的 Decode Plan、Release Plan 或插件状态。`omitempty` 保存在字段 Schema 中，供未来 encoder 使用。
-
-注解词汇表由 validator 在构建前检查；`SchemaBuilder` 只处理形成结构化 Schema 所需的类型解析、引用关联、数组布局和所有权派生。constraints、计数字段类型、binding/key 冲突及 ownership 组合规则由独立的 `validate_schema()` 在完整 Schema 上统一验证；`build_schema()` 只返回验证通过的结果。
-
-生成器使用 5 个固定模板，输出类型、字段、key、资源存储和 array-layout 的 `static const` 描述表，以及很薄的公开 decode/cleanup 包装函数。key entry 只保存 key 和字段 ID；map 按 UTF-8 字节的 `(len, memcmp)` 排序并二分查找。通用控制流、错误处理和资源回滚位于 `runtime/json_reflect.c`，生成结果不再包含大段重复流程代码或字段 callback。
-
-Python 前端和注解说明见 [annotation_parser/README.md](annotation_parser/README.md)。
-
-## Runtime
-
-`runtime` 的唯一库目标是 `json_reflect_api`，提供反射 decode/release 所需的单遍 pull parser、结构化错误、字符串和动态数组支撑。描述符使用 `offsetof`/`sizeof` 表达 C 布局，标量经固定宽度临时值和 `memcpy` 写入。生成的 decode 输出对象必须预先全零；失败时会回滚为全零，成功后使用对应的 cleanup 函数释放。
+也可以安装 Python 命令：
 
 ```sh
-cmake -S runtime -B build
-cmake --build build --target json_reflect_api
+python3.13 -m pip install ./annotation_parser
+annotation-parser --help
 ```
 
-当前不提供 writer 或 encoder；在 Encode Plan 的语义确定前，不为它们保留独立 runtime 接口。
+Runtime 目前没有安装规则，推荐把本仓库作为 CMake 子目录引入，目标名为 `json_reflect_api`。
 
-当前使用 Python 3.13、Clang、C11，并按 64 位 LP64 数据模型解释基础整数类型。
+## 最小示例
 
-构建依赖为 Python 3.13、Clang 和 CMake；运行 C/C++ 回归测试还需要支持 C++17 的编译器与 GoogleTest。生成的 C 代码只依赖本仓库 `runtime`。
+在公开头文件中包含 `json_pull.h`，并使用文档注释声明 JSON 行为：
+
+```c
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include "json_pull.h"
+
+typedef struct Address {
+    char city[64];
+} Address;
+
+/// @jsonStruct
+typedef struct User {
+    /// @json(key=id, altkey=user-id, required)
+    uint32_t id;
+
+    /// @json(maxlen=100)
+    char *name;
+
+    /// @json(type=array, len=address_count)
+    Address *addresses;
+    size_t address_count;
+} User;
+
+/// @jsonDecode
+bool decode_user(json_parser *parser, User *out);
+
+/// @jsonCleanup
+void cleanup_user(json_allocator *allocator, User *value);
+```
+
+生成 C 文件：
+
+```sh
+PYTHONPATH=annotation_parser/src python3 -m annotation_parser \
+  include/my_project/user.h \
+  -o generated/user_json.c \
+  --include my_project/user.h \
+  -- -I runtime -I include
+```
+
+`--include` 是生成 C 文件中使用的头文件拼写。上例会生成：
+
+```c
+#include "my_project/user.h"
+```
+
+在程序中调用：
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "my_project/user.h"
+
+int read_user(const char *text)
+{
+    json_allocator allocator = {malloc, free};
+    json_slice input = {text, strlen(text)};
+    json_parser parser;
+    User user = {0};
+
+    json_parser_init(&parser, &allocator, input);
+    if (!decode_user(&parser, &user)) {
+        fprintf(stderr, "JSON error %d at %zu:%zu\n",
+                (int)parser.error.code,
+                parser.error.location.line,
+                parser.error.location.column);
+        return 0;
+    }
+
+    /* 使用 user。 */
+    cleanup_user(&allocator, &user);
+    return 1;
+}
+```
+
+`json_estimate_error_msg_len()` 和 `json_fmt_error()` 可以将结构化错误格式化为文本。传给 `json_fmt_error()` 的缓冲区至少需要 `json_estimate_error_msg_len() + 1` 字节。
+
+## CLI
+
+```text
+annotation-parser INPUT.h -o OUTPUT.c \
+  [--clang CLANG] [-c PATH] [--include HEADER] \
+  [--dump-ir schema|plan|all] \
+  [-- <clang 参数>...]
+```
+
+| 参数 | 作用 |
+| --- | --- |
+| `INPUT.h` | 带注解的输入头文件 |
+| `-o, --output` | 生成的 C 源文件，必需 |
+| `--include` | 生成文件中包含输入头文件时使用的拼写；默认使用输入路径 |
+| `--clang` | 实际运行的 Clang 可执行文件，默认 `clang` |
+| `-c, --compile-commands` | `compile_commands.json` 文件或其所在目录 |
+| `--dump-ir` | 将 Schema、GeneratePlan 或两者打印到 stderr |
+| `--` | 后续参数原样追加到 Clang 参数末尾 |
+
+生成文件头包含来源头文件路径和内容 SHA-256。生成内容未变化时不会重写输出文件；生成失败也不会覆盖已有输出。
+
+### 使用 compile_commands.json
+
+```sh
+annotation-parser include/my_project/user.h \
+  -o generated/user_json.c \
+  --include my_project/user.h \
+  -c build \
+  -- -I runtime
+```
+
+Compilation database 的行为：
+
+- 支持 `arguments` 数组和 `command` 字符串两种格式。
+- 优先使用 `file` 与输入文件完全匹配的记录。
+- 头文件没有记录时，选择目录距离最近的 translation unit，同名 stem 优先。
+- 忽略数据库中的编译器、输入文件、输出文件、依赖生成和 `-c` 等 driver 参数。
+- 相对路径按记录的 `directory` 解析。
+- `--` 后的显式参数最后追加，可覆盖数据库中的 `-D`、`-std`、`-x` 等设置。
+- 实际编译器由 `--clang` 决定，不使用数据库记录中的 compiler。
+
+如果自动选择的 translation unit 不代表目标头文件的编译环境，应在 `--` 后显式补充或覆盖参数。
+
+## 注解
+
+注解必须位于 Clang 能识别的文档注释中，例如 `///` 或 `/** ... */`。字段支持尾随 `/// @json(...)`。未知命令、未知参数、非法重复参数及不适用的组合会在生成期报告文件、行和列。
+
+### 声明级注解
+
+| 注解 | 作用 |
+| --- | --- |
+| `@jsonStruct` | 将结构体映射为 JSON 对象，并允许作为公开 decode 根类型 |
+| `@jsonStruct(asarray, elems=..., len=..., cap=...)` | 将结构体映射为 JSON 数组容器；`len`、`cap` 可省略 |
+| `@jsonDecode` | 标记 `bool function(json_parser *, T *)` |
+| `@jsonCleanup` | 标记 `void function(json_allocator *, T *)` |
+
+每个公开 `@jsonDecode` 目标必须有对应的 `@jsonCleanup`。公开目标类型必须带 `@jsonStruct`；未标记结构体仍可作为可达的嵌套值、指针目标或 flatten 类型。
+
+### 字段级 `@json(...)`
+
+| 参数 | 作用 |
+| --- | --- |
+| `key=name` | 指定主 JSON key；默认使用 C 字段名 |
+| `altkey=name` | 指定别名，可重复；主键和所有别名命中同一字段 |
+| `required` | key 必须出现且值不能为 `null` |
+| `min=value`, `max=value` | 数值含边界约束 |
+| `minlen=n`, `maxlen=n` | 解码后的字符串字节数或数组元素数约束 |
+| `type=array, len=count` | 将非字符 `T *` 解释为动态数组，并把元素数写入 `count` |
+| `len=count` | 为固定 `T[N]` 保存实际元素数 |
+| `flatten` | 将值结构体的 JSON 字段展开到父对象 |
+| `omitempty` | 仅保存在 Schema 中，当前 decoder 不使用 |
+
+`required` 的主键或任一 `altkey` 出现即可满足“已提供”。值为 `{}`、`[]` 或空字符串是合法的；值为 `null` 和 key 缺失使用不同错误码。`required` 不能与 `flatten` 组合，也不能标记数组长度元数据字段。
+
+动态数组的伴随长度字段只存储元素数，不会作为独立 JSON key 解码。
+
+### 数组容器结构体
+
+```c
+/// @jsonStruct(asarray, elems=elems, len=len, cap=cap)
+typedef struct ItemVec {
+    Item *elems;
+    size_t len;
+    size_t cap;
+    unsigned reserved;
+} ItemVec;
+```
+
+- `asarray` 和 `elems=<field>` 必需。
+- `elems` 必须是非 `void` 指针。
+- `len`、`cap` 可独立省略；存在时必须引用互不相同的无符号整数字段。
+- `len` 保存 JSON 元素数，`cap` 保存实际可用元素容量。
+- 未被 `elems`、`len`、`cap` 引用的字段不参与解码或 cleanup，并保持零值。
+- 同时缺少 `len` 和 `cap` 时，元素必须是不需要逐元素释放的平凡类型。
+- 具名结构体和匿名 typedef 都支持；数组形状结构体不能 flatten。
+
+## 支持的类型和 JSON 表示
+
+| C 类型 | JSON 表示 | 说明 |
+| --- | --- | --- |
+| `_Bool`, `bool` | boolean | 仅接受 `true`/`false` |
+| 各宽度有/无符号整数及 typedef | number 或数值字符串 | 按目标位宽检查溢出 |
+| 数值 enum | number 或数值字符串 | 按 enum 底层整数存储 |
+| `float`, `double` | number 或数值字符串 | `float` 写入前检查范围 |
+| `char *` | string 或可选 `null` | 成功字符串以 NUL 结尾并由 allocator 持有 |
+| `char[N]` | string | 最多保存 `N-1` 个解码后 UTF-8 字节 |
+| `T[N]` | array | 最多接受 N 个元素，剩余位置保持零 |
+| `T *` + `type=array,len=...` | array 或可选 `null` | 动态数组，延迟分配 |
+| 值结构体 | object，或 array-shaped record | 可递归嵌套 |
+| 结构体指针 | object/array 或可选 `null` | 确认 JSON 类型后才分配对象 |
+
+暂不支持 union、位域、函数指针、柔性数组、C 零长数组、encoder、writer、外部 Schema 插件或 `__attribute__((annotation))`。
+
+## 解码、分配和释放语义
+
+- 输出对象必须全零。对已有资源的对象再次 decode 前，必须先调用 cleanup；生成的 decode 包装函数会清零输出，直接覆盖会泄漏旧资源。
+- 未知 JSON 字段会递归跳过。
+- 重复的已知 key（包括主键与别名的组合）采用最后一个值；覆盖前会先释放旧资源。
+- 缺失的非 required 字段保持零值。
+- 非 required 的 `char *`、动态数组和结构体指针接受 `null`，保持 `NULL` 且不分配。
+- 动态数组和数组容器只有发现第一个元素后才分配；`null` 和 `[]` 都不申请元素缓冲区，空数组表示为 `NULL + 0`。
+- 空 JSON 字符串会分配一个字节保存结尾 NUL，以区别于 `null`。
+- C 字符串拒绝解码后嵌入 NUL；字符串长度按解码后的 UTF-8 字节计算。
+- 所有非栈动态内存都通过调用者提供的 `json_allocator` 获取。
+- decode 失败会深度释放已经构造的部分并把输出恢复为全零。
+- cleanup 会深度释放并清零对象，可对零值或已经 cleanup 的对象重复调用。
+
+## 集成已有 CMake 项目
+
+以下示例假设仓库布局为：
+
+```text
+your-project/
+  CMakeLists.txt
+  include/my_project/user.h
+  src/main.c
+  third_party/jbcgen/
+```
+
+可复制的 `CMakeLists.txt`：
+
+```cmake
+cmake_minimum_required(VERSION 3.14)
+project(my_project LANGUAGES C)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+find_package(Python3 3.13 REQUIRED COMPONENTS Interpreter)
+
+set(JBCGEN_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/jbcgen")
+set(JSON_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/include/my_project/user.h")
+set(JSON_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(JSON_GENERATED_C "${JSON_GENERATED_DIR}/user_json.c")
+
+set(JBCGEN_PARENT_BUILD_TESTING "${BUILD_TESTING}")
+set(BUILD_TESTING OFF)
+add_subdirectory(
+    "${JBCGEN_ROOT}/runtime"
+    "${CMAKE_CURRENT_BINARY_DIR}/jbcgen-runtime"
+    EXCLUDE_FROM_ALL
+)
+set(BUILD_TESTING "${JBCGEN_PARENT_BUILD_TESTING}")
+unset(JBCGEN_PARENT_BUILD_TESTING)
+
+file(GLOB_RECURSE JBCGEN_PYTHON_SOURCES CONFIGURE_DEPENDS
+    "${JBCGEN_ROOT}/annotation_parser/src/annotation_parser/*.py"
+)
+
+add_custom_command(
+    OUTPUT "${JSON_GENERATED_C}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${JSON_GENERATED_DIR}"
+    COMMAND "${CMAKE_COMMAND}" -E env
+        "PYTHONPATH=${JBCGEN_ROOT}/annotation_parser/src"
+        "${Python3_EXECUTABLE}" -m annotation_parser
+        "${JSON_HEADER}"
+        -o "${JSON_GENERATED_C}"
+        --include "my_project/user.h"
+        -c "${CMAKE_BINARY_DIR}"
+        --
+        -I "${JBCGEN_ROOT}/runtime"
+    DEPENDS
+        "${JSON_HEADER}"
+        ${JBCGEN_PYTHON_SOURCES}
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    VERBATIM
+)
+
+set_source_files_properties("${JSON_GENERATED_C}" PROPERTIES GENERATED TRUE)
+
+add_library(my_project_json STATIC "${JSON_GENERATED_C}")
+target_include_directories(my_project_json PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_link_libraries(my_project_json PUBLIC json_reflect_api)
+
+add_executable(my_app src/main.c)
+target_link_libraries(my_app PRIVATE my_project_json)
+```
+
+配置并构建：
+
+```sh
+cmake -S . -B build -G Ninja
+cmake --build build
+```
+
+说明：
+
+- `CMAKE_EXPORT_COMPILE_COMMANDS` 让 generator 复用目标的宏、include、target 和语言选项。该功能通常配合 Ninja 或 Makefile generator 使用。
+- 临时设置 `BUILD_TESTING=OFF` 只是不配置 jbcgen 自身的 GoogleTest 回归；随后立即恢复父项目原值，不影响业务项目测试。
+- `DEPENDS` 同时列出输入头文件和 generator Python 源码，因此修改注解或 generator 后会重新执行。
+- generator 自身会比较完整生成内容；内容相同时不会更新时间戳，避免无意义的下游重编译。
+- `my_project_json` 通过 `PUBLIC` 链接 `json_reflect_api`，最终可执行文件只需链接 `my_project_json`。
+- 若不使用 compilation database，可删除 `-c`，并在 `--` 后完整传入目标所需的 `-I`、`-D`、`--target` 等 Clang 参数。
+- 如果已安装 `annotation-parser`，可以把 `cmake -E env ... python -m annotation_parser` 替换为 `annotation-parser` 命令，并将其可执行文件加入 `DEPENDS`。
+
+## 架构与调试
+
+```text
+Clang JSON AST + documentation comments
+               │
+               ▼
+       structured AstType tree
+               │
+               ▼
+             Schema
+               │
+               ▼
+          GeneratePlan
+               │
+               ▼
+    C reflection descriptors
+               │
+               ▼
+      json_reflect_api runtime
+```
+
+Clang frontend 负责把 C 类型解析为结构化 `AstType`；Schema 保存类型图、JSON binding、约束、数组布局、入口函数和所有权；GeneratePlan 固定 key 的 `(UTF-8 byte length, memcmp)` 顺序和描述符布局。Schema 与 GeneratePlan 的打印只用于调试，不是稳定序列化格式。
+
+## 开发与测试
+
+```sh
+cd annotation_parser
+ruff format --check .
+ruff check .
+PYTHONPATH=src python3 -m unittest discover -s tests -v
+
+cd ../runtime
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+完整注解和 frontend 实现说明见 [annotation_parser/README.md](annotation_parser/README.md)。

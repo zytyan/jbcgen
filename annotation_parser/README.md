@@ -57,6 +57,12 @@ PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
 
 生成文件头记录来源头文件及其内容的 SHA-256。生成结果与已有文件相同时不会重写文件；生成失败时也不会覆盖已有输出。Clang 和注解错误包含文件、行、列。
 
+## 集成现有项目
+
+生成的 `.c` 文件需要与输入头文件一起编译，并链接仓库 `runtime` 提供的 CMake 目标 `json_reflect_api`。推荐在项目中开启 `CMAKE_EXPORT_COMPILE_COMMANDS`，通过 `add_custom_command(OUTPUT ...)` 调用 generator，并把输入头文件和 `annotation_parser/src/annotation_parser/*.py` 都列入 `DEPENDS`。
+
+完整、可直接复制的 CMake 示例以及运行期调用示例见仓库根目录 [README.md](../README.md#集成已有-cmake-项目)。
+
 ## 注解
 
 - `@jsonStruct`：将结构体映射为 JSON 对象，并允许作为公开生成入口。
