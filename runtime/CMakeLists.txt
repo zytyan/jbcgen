@@ -7,8 +7,13 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 option(JSON_REFLECT_BUILD_TESTS "Build json_reflect_api tests" OFF)
 option(
-    JSON_REFLECT_ENABLE_SANITIZERS
-    "Enable AddressSanitizer and UndefinedBehaviorSanitizer for json_reflect_api"
+    JSON_REFLECT_ENABLE_ASAN
+    "Enable AddressSanitizer for json_reflect_api"
+    OFF
+)
+option(
+    JSON_REFLECT_ENABLE_UBSAN
+    "Enable UndefinedBehaviorSanitizer for json_reflect_api"
     OFF
 )
 option(
@@ -17,16 +22,24 @@ option(
     OFF
 )
 
-if(JSON_REFLECT_ENABLE_LSAN_CHECKS AND NOT JSON_REFLECT_ENABLE_SANITIZERS)
+if(JSON_REFLECT_ENABLE_LSAN_CHECKS AND NOT JSON_REFLECT_ENABLE_ASAN)
     message(FATAL_ERROR
-        "JSON_REFLECT_ENABLE_LSAN_CHECKS requires JSON_REFLECT_ENABLE_SANITIZERS"
+        "JSON_REFLECT_ENABLE_LSAN_CHECKS requires JSON_REFLECT_ENABLE_ASAN"
     )
 endif()
 
-if(JSON_REFLECT_ENABLE_SANITIZERS)
+if(JSON_REFLECT_ENABLE_ASAN OR JSON_REFLECT_ENABLE_UBSAN)
     if(NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-        message(FATAL_ERROR "JSON_REFLECT_ENABLE_SANITIZERS requires GCC or Clang")
+        message(FATAL_ERROR "json_reflect_api sanitizers require GCC or Clang")
     endif()
+endif()
+
+set(JSON_REFLECT_SANITIZER_FLAGS)
+if(JSON_REFLECT_ENABLE_ASAN)
+    list(APPEND JSON_REFLECT_SANITIZER_FLAGS -fsanitize=address)
+endif()
+if(JSON_REFLECT_ENABLE_UBSAN)
+    list(APPEND JSON_REFLECT_SANITIZER_FLAGS -fsanitize=undefined)
 endif()
 
 add_library(json_reflect_api
@@ -45,13 +58,13 @@ add_library(json_reflect_api
     json_tokenizer.c
 )
 target_include_directories(json_reflect_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-if(JSON_REFLECT_ENABLE_SANITIZERS)
+if(JSON_REFLECT_SANITIZER_FLAGS)
     target_compile_options(json_reflect_api PRIVATE
-        -fsanitize=address,undefined
+        ${JSON_REFLECT_SANITIZER_FLAGS}
         -fno-omit-frame-pointer
         -g
     )
-    target_link_options(json_reflect_api PUBLIC -fsanitize=address,undefined)
+    target_link_options(json_reflect_api PUBLIC ${JSON_REFLECT_SANITIZER_FLAGS})
 endif()
 set_target_properties(json_reflect_api PROPERTIES
     VERSION 1.0.0
@@ -64,9 +77,9 @@ if(JSON_REFLECT_BUILD_TESTS)
     enable_language(CXX)
     set(CMAKE_CXX_STANDARD 17)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
-    if(JSON_REFLECT_ENABLE_SANITIZERS AND
+    if((JSON_REFLECT_ENABLE_ASAN OR JSON_REFLECT_ENABLE_UBSAN) AND
        NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        message(FATAL_ERROR "JSON_REFLECT_ENABLE_SANITIZERS requires GCC or Clang")
+        message(FATAL_ERROR "json_reflect_api sanitizers require GCC or Clang")
     endif()
     find_package(GTest REQUIRED)
 

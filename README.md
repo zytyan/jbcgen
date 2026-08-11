@@ -439,23 +439,34 @@ Runtime 使用独立且默认关闭的开发选项，不读取宿主项目的同
 
 ```text
 JSON_REFLECT_BUILD_TESTS=OFF
-JSON_REFLECT_ENABLE_SANITIZERS=OFF
+JSON_REFLECT_ENABLE_ASAN=OFF
+JSON_REFLECT_ENABLE_UBSAN=OFF
 JSON_REFLECT_ENABLE_LSAN_CHECKS=OFF
 ```
 
-启用 ASan/UBSan 测试但关闭 LSan：
+单独运行 ASan，并同时启用 LSan：
 
 ```sh
 cmake -S runtime -B build-asan \
   -DJSON_REFLECT_BUILD_TESTS=ON \
-  -DJSON_REFLECT_ENABLE_SANITIZERS=ON \
-  -DJSON_REFLECT_ENABLE_LSAN_CHECKS=OFF
+  -DJSON_REFLECT_ENABLE_ASAN=ON \
+  -DJSON_REFLECT_ENABLE_LSAN_CHECKS=ON
 cmake --build build-asan
 ctest --test-dir build-asan --output-on-failure
 ```
 
-`JSON_REFLECT_ENABLE_LSAN_CHECKS=ON` 必须与 sanitizer 开关同时使用。三个选项都带
-`JSON_REFLECT_` 前缀，不会因宿主项目设置 `BUILD_TESTING`、`ENABLE_SANITIZERS`
-或类似通用变量而意外启用。
+单独运行 UBSan：
+
+```sh
+cmake -S runtime -B build-ubsan \
+  -DJSON_REFLECT_BUILD_TESTS=ON \
+  -DJSON_REFLECT_ENABLE_UBSAN=ON
+cmake --build build-ubsan
+ctest --test-dir build-ubsan --output-on-failure
+```
+
+ASan 与 UBSan 可以分别或同时启用；LSan 依赖 ASan，不能只与 UBSan 配合。
+这些选项都带 `JSON_REFLECT_` 前缀，不会因宿主项目设置 `BUILD_TESTING`、
+`ENABLE_SANITIZERS` 或类似通用变量而意外启用。
 
 完整注解和 frontend 实现说明见 [annotation_parser/README.md](annotation_parser/README.md)。

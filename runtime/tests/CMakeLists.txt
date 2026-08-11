@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.14)
 
-if(JSON_REFLECT_ENABLE_SANITIZERS)
-    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
+if(JSON_REFLECT_SANITIZER_FLAGS)
+    add_compile_options(
+        ${JSON_REFLECT_SANITIZER_FLAGS}
+        -fno-omit-frame-pointer
+        -g
+    )
 endif()
 
 # Test source files
@@ -42,7 +46,7 @@ target_include_directories(json_reflect_tests PRIVATE
 )
 
 include(GoogleTest)
-if(NOT JSON_REFLECT_ENABLE_SANITIZERS)
+if(NOT JSON_REFLECT_ENABLE_ASAN AND NOT JSON_REFLECT_ENABLE_UBSAN)
     gtest_discover_tests(json_reflect_tests)
 endif()
 
@@ -96,7 +100,7 @@ if(UNIX AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     add_test(NAME json_allocator_contract_test COMMAND json_allocator_contract_test)
 endif()
 
-if(JSON_REFLECT_ENABLE_SANITIZERS)
+if(JSON_REFLECT_ENABLE_ASAN OR JSON_REFLECT_ENABLE_UBSAN)
     set(SANITIZER_TESTS json_reflect_tests json_reflect_basic_types_test)
     if(TARGET json_reflect_abi_mismatch_test)
         list(APPEND SANITIZER_TESTS json_reflect_abi_mismatch_test)
@@ -105,13 +109,26 @@ if(JSON_REFLECT_ENABLE_SANITIZERS)
         list(APPEND SANITIZER_TESTS json_allocator_contract_test)
     endif()
 
-    if(JSON_REFLECT_ENABLE_LSAN_CHECKS)
-        set_tests_properties(${SANITIZER_TESTS} PROPERTIES
-            ENVIRONMENT "ASAN_OPTIONS=detect_leaks=1;LSAN_OPTIONS=detect_leaks=1"
-        )
-    else()
-        set_tests_properties(${SANITIZER_TESTS} PROPERTIES
-            ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0;LSAN_OPTIONS=detect_leaks=0"
+    set(SANITIZER_TEST_ENVIRONMENT)
+    if(JSON_REFLECT_ENABLE_ASAN)
+        if(JSON_REFLECT_ENABLE_LSAN_CHECKS)
+            list(APPEND SANITIZER_TEST_ENVIRONMENT
+                "ASAN_OPTIONS=detect_leaks=1"
+                "LSAN_OPTIONS=detect_leaks=1"
+            )
+        else()
+            list(APPEND SANITIZER_TEST_ENVIRONMENT
+                "ASAN_OPTIONS=detect_leaks=0"
+                "LSAN_OPTIONS=detect_leaks=0"
+            )
+        endif()
+    endif()
+    if(JSON_REFLECT_ENABLE_UBSAN)
+        list(APPEND SANITIZER_TEST_ENVIRONMENT
+            "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1"
         )
     endif()
+    set_tests_properties(${SANITIZER_TESTS} PROPERTIES
+        ENVIRONMENT "${SANITIZER_TEST_ENVIRONMENT}"
+    )
 endif()
