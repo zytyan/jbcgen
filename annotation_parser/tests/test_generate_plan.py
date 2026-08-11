@@ -64,21 +64,13 @@ class GeneratePlanTest(unittest.TestCase):
             [("id",), ("detail", "label"), ("items",)],
         )
         self.assertEqual([field.seen_index for field in root.fields], [0, 1, 2])
-        self.assertEqual(
-            [field.decode_helper for field in root.fields],
-            [
-                "jbc_decode_Root_field_id",
-                "jbc_decode_Root_field_detail_label",
-                "jbc_decode_Root_field_items",
-            ],
-        )
-        self.assertEqual(root.rollback_helper, root.release_helper)
+        self.assertEqual(root.type_descriptor, "jbc_type_Root")
+        self.assertEqual(root.record_descriptor, "jbc_record_Root")
         self.assertEqual(
             [(item.key, item.field_index) for item in root.key_entries],
             [("id", 0), ("items", 2), ("label", 1), ("identifier", 0)],
         )
         self.assertEqual(root.fields[2].length_path, ("itemCount",))
-        self.assertEqual(root.key_entries[0].decode_helper, "jbc_decode_Root_field_id")
         self.assertEqual(
             schema.type_map()[schema.field_map()[root.fields[2].field_id].type_id].kind,
             TypeKind.DYNAMIC_ARRAY,
@@ -88,9 +80,9 @@ class GeneratePlanTest(unittest.TestCase):
             ("field:Root.detail", "field:Root.items"),
         )
         rendered = format_generate_plan(plan, schema)
-        self.assertIn("on-failure -> jbc_release_Root", rendered)
+        self.assertIn("decode-failure -> json_reflect_release(self)", rendered)
         self.assertIn("field detail.label", rendered)
-        self.assertIn("release-fields", rendered)
+        self.assertIn("release-storage", rendered)
 
     def test_key_entries_use_utf8_length_then_byte_order(self) -> None:
         schema = make_schema()
@@ -132,7 +124,7 @@ class GeneratePlanTest(unittest.TestCase):
         item = plan.type_map()["record:Strings"]
         self.assertEqual(item.shape, RecordShape.ARRAY)
         self.assertEqual(item.fields, ())
-        self.assertEqual(item.rollback_helper, item.release_helper)
+        self.assertEqual(item.type_descriptor, "jbc_type_Strings")
         storage = schema.record_map()[item.record_id].array
         assert storage is not None
         self.assertEqual(storage.element_type_id, "string:pointer")

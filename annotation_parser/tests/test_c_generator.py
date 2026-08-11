@@ -75,43 +75,31 @@ class CGeneratorTest(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(process.returncode, 0, process.stderr + "\n" + source)
-            self.assertIn("jbc_decode_Root", source)
-            self.assertIn("jbc_release_Root", source)
-            self.assertIn("json_key_dispatch(&jbc_decode_Root_key_map", source)
-            self.assertIn('{{"identifier", 10}, 0, jbc_decode_Root_field_id}', source)
+            self.assertIn("static const json_reflect_record jbc_record_Root", source)
+            self.assertIn("static const json_reflect_type jbc_type_Root", source)
+            self.assertIn('{{"identifier", 10}, 0}', source)
+            self.assertIn(".offset = offsetof(struct Root, id)", source)
+            self.assertIn("json_reflect_decode(parser, &jbc_type_Root, out)", source)
             self.assertIn(
-                "static bool jbc_decode_Root_field_id(json_parser *parser, void *object)",
-                source,
+                "json_reflect_release(allocator, &jbc_type_Root, out)", source
             )
-            self.assertNotIn("switch (field_index)", source)
+            self.assertNotIn("jbc_decode_Root_field_id", source)
             self.assertLess(
-                source.index('{{"id", 2}, 0,'), source.index('{{"kind", 4}, 5,')
-            )
-            self.assertLess(
-                source.index('{{"kind", 4}, 5,'),
-                source.index('{{"name", 4}, 1,'),
+                source.index('{{"id", 2}, 0}'), source.index('{{"kind", 4}, 5}')
             )
             self.assertLess(
-                source.index('{{"name", 4}, 1,'),
-                source.index('{{"children", 8}, 2,'),
+                source.index('{{"kind", 4}, 5}'),
+                source.index('{{"name", 4}, 1}'),
             )
             self.assertLess(
-                source.index('{{"children", 8}, 2,'),
-                source.index('{{"identifier", 10}, 0,'),
+                source.index('{{"name", 4}, 1}'),
+                source.index('{{"children", 8}, 2}'),
             )
-            self.assertIn("JSON_ERROR_OTHER_MISSING_REQUIRED_KEY", source)
-            pointer_check = source.index(
-                "JSON_TOKEN_LBRACE", source.index("out->optional")
+            self.assertLess(
+                source.index('{{"children", 8}, 2}'),
+                source.index('{{"identifier", 10}, 0}'),
             )
-            pointer_allocation = source.index(
-                "parser->allocator->malloc", pointer_check
-            )
-            self.assertLess(pointer_check, pointer_allocation)
-            reserve = source.index("json_any_vec_reserve")
-            empty_check = source.index(
-                "if (!json_array_try_end", source.index("jbc_decode_Root")
-            )
-            self.assertGreater(reserve, empty_check)
+            self.assertIn(".flags = JSON_REFLECT_REQUIRED", source)
 
     def test_array_record_and_anonymous_typedef_compile_as_c11(self) -> None:
         header_source = """
@@ -171,11 +159,11 @@ class CGeneratorTest(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(process.returncode, 0, process.stderr + "\n" + source)
-            self.assertIn("json_parser *parser, StringVec *out", source)
-            self.assertNotIn("struct StringVec *out", source)
-            self.assertIn("JSON_EXPECTED_ARRAY", source)
-            self.assertIn("array_vec.byte_cap / sizeof(char *)", source)
-            self.assertIn("_count >= (size_t)255", source)
+            self.assertIn(".size = sizeof(StringVec)", source)
+            self.assertNotIn("sizeof(struct StringVec)", source)
+            self.assertIn(".shape = JSON_REFLECT_ARRAY", source)
+            self.assertIn(".element_type = &jbc_type_string_pointer", source)
+            self.assertIn(".capacity_type = &jbc_type_integer_u8", source)
 
 
 if __name__ == "__main__":

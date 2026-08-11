@@ -10,21 +10,20 @@ def _identifier(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", value)
 
 
-def _helper_name(prefix: str, record_id: str) -> str:
-    return f"jbc_{prefix}_{_identifier(record_id.removeprefix('record:'))}"
+def _descriptor_name(prefix: str, value: str) -> str:
+    return f"jbc_{prefix}_{_identifier(value.removeprefix('record:'))}"
 
 
-def _field_helper_name(owner_record_id: str, path: tuple[str, ...]) -> str:
-    owner = _identifier(owner_record_id.removeprefix("record:"))
-    field_path = "_".join(_identifier(part) for part in path)
-    return f"jbc_decode_{owner}_field_{field_path}"
+@dataclass(frozen=True)
+class TypeDescriptorPlan:
+    type_id: str
+    symbol: str
 
 
 @dataclass(frozen=True)
 class KeyEntryPlan:
     key: str
     field_index: int
-    decode_helper: str
 
 
 @dataclass(frozen=True)
@@ -33,16 +32,14 @@ class FieldPlan:
     path: tuple[str, ...]
     length_path: tuple[str, ...] | None
     seen_index: int
-    decode_helper: str
 
 
 @dataclass(frozen=True)
 class TypePlan:
     record_id: str
     shape: RecordShape
-    decode_helper: str
-    release_helper: str
-    rollback_helper: str
+    type_descriptor: str
+    record_descriptor: str
     fields: tuple[FieldPlan, ...]
     key_entries: tuple[KeyEntryPlan, ...]
     owned_field_ids: tuple[str, ...]
@@ -51,10 +48,14 @@ class TypePlan:
 
 @dataclass(frozen=True)
 class GeneratePlan:
+    descriptors: tuple[TypeDescriptorPlan, ...]
     types: tuple[TypePlan, ...]
 
     def type_map(self) -> dict[str, TypePlan]:
         return {item.record_id: item for item in self.types}
+
+    def descriptor_map(self) -> dict[str, str]:
+        return {item.type_id: item.symbol for item in self.descriptors}
 
 
 class GeneratePlanBuilder:
@@ -66,9 +67,47 @@ class GeneratePlanBuilder:
         self.metadata = schema.metadata_field_ids()
 
     def build(self) -> GeneratePlan:
-        return GeneratePlan(
-            tuple(self._type_plan(record.id) for record in self.schema.records)
+        used = self._used_type_ids()
+        descriptors = tuple(
+            TypeDescriptorPlan(item.id, _descriptor_name("type", item.id))
+            for item in self.schema.types
+            if item.id in used
         )
+        return GeneratePlan(
+            descriptors,
+            tuple(self._type_plan(record.id) for record in self.schema.records),
+        )
+
+    def _used_type_ids(self) -> set[str]:
+        used = {record.id for record in self.schema.records}
+        roots: set[str] = set()
+        for record in self.schema.records:
+            if record.array is not None:
+                roots.add(record.array.element_type_id)
+                for field_id in (
+                    record.array.length_field_id,
+                    record.array.capacity_field_id,
+                ):
+                    if field_id:
+                        roots.add(self.fields[field_id].type_id)
+            else:
+                for field in record.fields:
+                    if not field.ignored and field.id not in self.metadata:
+                        roots.add(field.type_id)
+                    if field.length_field_id:
+                        roots.add(self.fields[field.length_field_id].type_id)
+
+        def visit(type_id: str) -> None:
+            if type_id in used:
+                return
+            used.add(type_id)
+            target = self.types[type_id].target
+            if target is not None:
+                visit(target)
+
+        for type_id in roots:
+            visit(type_id)
+        return used
 
     def _type_plan(self, record_id: str) -> TypePlan:
         record = self.records[record_id]
@@ -78,7 +117,7 @@ class GeneratePlanBuilder:
         keys = tuple(
             sorted(
                 (
-                    KeyEntryPlan(key, field.seen_index, field.decode_helper)
+                    KeyEntryPlan(key, field.seen_index)
                     for field in fields
                     for key in (
                         self.fields[field.field_id].key,
@@ -98,13 +137,11 @@ class GeneratePlanBuilder:
             and not field.ignored
             and field.id not in self.metadata
         )
-        release = _helper_name("release", record_id)
         return TypePlan(
             record_id,
             record.shape,
-            _helper_name("decode", record_id),
-            release,
-            release,
+            _descriptor_name("type", record_id),
+            _descriptor_name("record", record_id),
             fields,
             keys,
             owned,
@@ -135,17 +172,10 @@ class GeneratePlanBuilder:
                     path,
                     prefix + (length.name,) if length else None,
                     len(result),
-                    _field_helper_name(owner_record_id, path),
                 )
             )
         return tuple(
-            FieldPlan(
-                item.field_id,
-                item.path,
-                item.length_path,
-                index,
-                item.decode_helper,
-            )
+            FieldPlan(item.field_id, item.path, item.length_path, index)
             for index, item in enumerate(result)
         )
 
@@ -182,13 +212,15 @@ def build_generate_plan(schema: Schema) -> GeneratePlan:
 def format_generate_plan(plan: GeneratePlan, schema: Schema) -> str:
     fields = schema.field_map()
     records = schema.record_map()
-    lines = ["GeneratePlan"]
+    lines = ["GeneratePlan", "  descriptors"]
+    for descriptor in plan.descriptors:
+        lines.append(f"    {descriptor.type_id} -> {descriptor.symbol}")
     for item in plan.types:
         lines.append(
             f"  type {item.record_id} shape={item.shape.value} "
-            f"decode={item.decode_helper} release={item.release_helper}"
+            f"descriptor={item.type_descriptor} record={item.record_descriptor}"
         )
-        lines.append(f"    on-failure -> {item.rollback_helper}")
+        lines.append("    decode-failure -> json_reflect_release(self)")
         if item.dependencies:
             lines.append(f"    dependencies {item.dependencies!r}")
         if item.shape is RecordShape.ARRAY:
@@ -211,20 +243,17 @@ def format_generate_plan(plan: GeneratePlan, schema: Schema) -> str:
             lines.append(
                 f"    field {'.'.join(field.path)} type={schema_field.type_id} "
                 f"keys={(schema_field.key, *schema_field.altkeys)!r} "
-                f"helper={field.decode_helper} [{' '.join(flags)}]"
+                f"[{' '.join(flags)}]"
             )
             if field.length_path:
                 lines.append(f"      length {'.'.join(field.length_path)}")
         if item.owned_field_ids:
-            lines.append(f"    release-fields {item.owned_field_ids!r}")
+            lines.append(f"    release-storage {item.owned_field_ids!r}")
         if item.key_entries:
             lines.append(
                 "    key-order "
                 + repr(
-                    tuple(
-                        (entry.key, entry.field_index, entry.decode_helper)
-                        for entry in item.key_entries
-                    )
+                    tuple((entry.key, entry.field_index) for entry in item.key_entries)
                 )
             )
     return "\n".join(lines)

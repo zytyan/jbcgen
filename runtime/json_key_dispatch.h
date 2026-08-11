@@ -1,7 +1,6 @@
 #ifndef JSON_KEY_DISPATCH_H
 #define JSON_KEY_DISPATCH_H
 
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -11,14 +10,9 @@
 extern "C" {
 #endif
 
-struct json_parser;
-typedef bool (*json_field_decode_fn)(struct json_parser *parser, void *object);
-
 typedef struct json_key_entry {
     json_slice key;
     uint32_t id;
-    /* Transitional field; reflection maps leave it NULL. */
-    json_field_decode_fn decode;
 } json_key_entry;
 
 typedef struct json_key_map {

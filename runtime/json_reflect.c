@@ -783,7 +783,12 @@ static bool json_reflect_decode_record_object(
     if (!json_object_begin(parser)) {
         return false;
     }
-    if (!json_object_try_end(parser)) {
+    if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACE) {
+        object_end = json_peek_token(parser)->location;
+        if (!json_object_try_end(parser)) {
+            return false;
+        }
+    } else {
         while (true) {
             const json_source_location key_location =
                 json_peek_token(parser)->location;
@@ -849,8 +854,6 @@ static bool json_reflect_decode_record_object(
                 return false;
             }
         }
-    } else {
-        object_end = parser->current_token.location;
     }
     for (size_t index = 0; index < record->field_count; ++index) {
         if ((record->fields[index].flags & JSON_REFLECT_REQUIRED) != 0 &&
