@@ -81,21 +81,22 @@ class GeneratePlanBuilder:
     def _used_type_ids(self) -> set[str]:
         used = {record.id for record in self.schema.records}
         roots: set[str] = set()
+
+        def add_if_named(type_id: str) -> None:
+            if self.types[type_id].kind not in {
+                TypeKind.BOOL,
+                TypeKind.INTEGER,
+                TypeKind.FLOAT,
+            }:
+                roots.add(type_id)
+
         for record in self.schema.records:
             if record.array is not None:
-                roots.add(record.array.element_type_id)
-                for field_id in (
-                    record.array.length_field_id,
-                    record.array.capacity_field_id,
-                ):
-                    if field_id:
-                        roots.add(self.fields[field_id].type_id)
+                add_if_named(record.array.element_type_id)
             else:
                 for field in record.fields:
                     if not field.ignored and field.id not in self.metadata:
-                        roots.add(field.type_id)
-                    if field.length_field_id:
-                        roots.add(self.fields[field.length_field_id].type_id)
+                        add_if_named(field.type_id)
 
         def visit(type_id: str) -> None:
             if type_id in used:

@@ -349,7 +349,7 @@ Clang JSON AST + documentation comments
       json_reflect_api runtime
 ```
 
-Clang frontend 负责把 C 类型解析为结构化 `AstType`；Schema 保存类型图、JSON binding、约束、数组布局、入口函数和所有权；GeneratePlan 固定 key 的 `(UTF-8 byte length, memcmp)` 顺序和描述符布局。Schema 与 GeneratePlan 的打印只用于调试，不是稳定序列化格式。
+Clang frontend 负责把 C 类型解析为结构化 `AstType`；Schema 保存类型图、JSON binding、约束、数组布局、入口函数和所有权；GeneratePlan 固定 key 的 `(UTF-8 byte length, memcmp)` 顺序和描述符布局。生成的基础字段使用 C11 `_Generic` 根据真实字段类型选择 kind、bits 和 signedness，typedef 自动按兼容基础类型匹配；enum 保留明确的 enum kind，但宽度和符号仍由其实际 C 类型派生。Schema 与 GeneratePlan 的打印只用于调试，不是稳定序列化格式。
 
 ## 开发与测试
 

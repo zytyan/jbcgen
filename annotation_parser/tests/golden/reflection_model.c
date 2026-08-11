@@ -13,7 +13,6 @@ static const json_reflect_type jbc_type_dynamic_array_record_Child;
 static const json_reflect_type jbc_type_enum_Kind;
 static const json_reflect_type jbc_type_fixed_array_3_integer_i32;
 static const json_reflect_type jbc_type_integer_i32;
-static const json_reflect_type jbc_type_integer_u64;
 static const json_reflect_type jbc_type_pointer_record_Child;
 static const json_reflect_type jbc_type_Child;
 static const json_reflect_type jbc_type_Root;
@@ -34,8 +33,8 @@ static const json_reflect_type jbc_type_dynamic_array_record_Child = {
 
 static const json_reflect_type jbc_type_enum_Kind = {
     .kind = JSON_REFLECT_ENUM,
-    .bits = 32,
-    .flags = JSON_REFLECT_SIGNED,
+    .bits = JSON_REFLECT_BASIC_BITS((Kind){0}),
+    .flags = JSON_REFLECT_BASIC_FLAGS((Kind){0}),
     .size = sizeof(Kind),
     .capacity = 0,
     .target = NULL,
@@ -52,25 +51,7 @@ static const json_reflect_type jbc_type_fixed_array_3_integer_i32 = {
     .record = NULL,
 };
 
-static const json_reflect_type jbc_type_integer_i32 = {
-    .kind = JSON_REFLECT_INTEGER,
-    .bits = 32,
-    .flags = JSON_REFLECT_SIGNED,
-    .size = sizeof(int),
-    .capacity = 0,
-    .target = NULL,
-    .record = NULL,
-};
-
-static const json_reflect_type jbc_type_integer_u64 = {
-    .kind = JSON_REFLECT_INTEGER,
-    .bits = 64,
-    .flags = 0,
-    .size = sizeof(size_t),
-    .capacity = 0,
-    .target = NULL,
-    .record = NULL,
-};
+static const json_reflect_type jbc_type_integer_i32 = JSON_REFLECT_BASIC_TYPE_INIT((int){0});
 
 static const json_reflect_type jbc_type_pointer_record_Child = {
     .kind = JSON_REFLECT_POINTER,
@@ -179,7 +160,7 @@ static const json_reflect_field jbc_record_Root_fields[] = {
     {
         .primary_key = {"identifier", sizeof("identifier") - 1},
         .offset = offsetof(struct Root, id),
-        .type = &jbc_type_integer_i32,
+        .type = JSON_REFLECT_BASIC_TYPE(((struct Root *)0)->id),
         .constraints = &jbc_record_Root_field_0_constraints,
         .count_offset = SIZE_MAX,
         .count_type = NULL,
@@ -200,7 +181,7 @@ static const json_reflect_field jbc_record_Root_fields[] = {
         .type = &jbc_type_dynamic_array_record_Child,
         .constraints = &jbc_record_Root_field_2_constraints,
         .count_offset = offsetof(struct Root, childCount),
-        .count_type = &jbc_type_integer_u64,
+        .count_type = JSON_REFLECT_BASIC_TYPE(((struct Root *)0)->childCount),
         .flags = 0,
     },
     {
@@ -209,7 +190,7 @@ static const json_reflect_field jbc_record_Root_fields[] = {
         .type = &jbc_type_fixed_array_3_integer_i32,
         .constraints = NULL,
         .count_offset = offsetof(struct Root, valueCount),
-        .count_type = &jbc_type_integer_u64,
+        .count_type = JSON_REFLECT_BASIC_TYPE(((struct Root *)0)->valueCount),
         .flags = 0,
     },
     {
@@ -236,7 +217,7 @@ static const json_reflect_storage jbc_record_Root_storage[] = {
         .offset = offsetof(struct Root, children),
         .type = &jbc_type_dynamic_array_record_Child,
         .count_offset = offsetof(struct Root, childCount),
-        .count_type = &jbc_type_integer_u64,
+        .count_type = JSON_REFLECT_BASIC_TYPE(((struct Root *)0)->childCount),
     },
     {
         .offset = offsetof(struct Root, optional),

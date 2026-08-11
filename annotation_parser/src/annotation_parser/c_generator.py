@@ -93,18 +93,28 @@ class CGenerator:
         }[item.kind]
 
     def _type_definition(self, item: TypeSchema) -> str:
+        if item.kind in {TypeKind.BOOL, TypeKind.INTEGER, TypeKind.FLOAT}:
+            return (
+                f"static const json_reflect_type {self.descriptors[item.id]} = "
+                f"JSON_REFLECT_BASIC_TYPE_INIT(({item.c_type}){{0}});"
+            )
         target = f"&{self.descriptors[item.target]}" if item.target else "NULL"
         record = (
             f"&{self.type_plans[item.id].record_descriptor}"
             if item.kind is TypeKind.RECORD
             else "NULL"
         )
+        bits = str(item.bits or 0)
         flags = "JSON_REFLECT_SIGNED" if item.signed else "0"
+        if item.kind is TypeKind.ENUM:
+            expression = f"({item.c_type}){{0}}"
+            bits = f"JSON_REFLECT_BASIC_BITS({expression})"
+            flags = f"JSON_REFLECT_BASIC_FLAGS({expression})"
         return "\n".join(
             (
                 f"static const json_reflect_type {self.descriptors[item.id]} = {{",
                 f"    .kind = {self._kind(item)},",
-                f"    .bits = {item.bits or 0},",
+                f"    .bits = {bits},",
                 f"    .flags = {flags},",
                 f"    .size = sizeof({item.c_type}),",
                 f"    .capacity = {item.capacity or 0},",
@@ -113,6 +123,15 @@ class CGenerator:
                 "};",
             )
         )
+
+    def _field_expression(self, record: RecordSchema, path: tuple[str, ...]) -> str:
+        return f"(({record.c_type} *)0)->{'.'.join(path)}"
+
+    def _type_pointer(self, type_id: str, expression: str) -> str:
+        item = self.types[type_id]
+        if item.kind in {TypeKind.BOOL, TypeKind.INTEGER, TypeKind.FLOAT}:
+            return f"JSON_REFLECT_BASIC_TYPE({expression})"
+        return f"&{self.descriptors[type_id]}"
 
     def _record_block(self, record: RecordSchema) -> str:
         plan = self.type_plans[record.id]
@@ -258,7 +277,9 @@ class CGenerator:
             count_offset = "SIZE_MAX"
             if field.length_path:
                 count = self._field_schema(record, field.length_path)
-                count_type = f"&{self.descriptors[count.type_id]}"
+                count_type = self._type_pointer(
+                    count.type_id, self._field_expression(record, field.length_path)
+                )
                 count_offset = self._offset(record, field.length_path)
             constraints = constraint_names.get(field.field_index)
             lines.extend(
@@ -266,7 +287,7 @@ class CGenerator:
                     "    {",
                     f"        .primary_key = {_c_slice(schema_field.key)},",
                     f"        .offset = {self._offset(record, field.path)},",
-                    f"        .type = &{self.descriptors[schema_field.type_id]},",
+                    f"        .type = {self._type_pointer(schema_field.type_id, self._field_expression(record, field.path))},",
                     f"        .constraints = {'&' + constraints if constraints else 'NULL'},",
                     f"        .count_offset = {count_offset},",
                     f"        .count_type = {count_type},",
@@ -288,7 +309,10 @@ class CGenerator:
             count_offset = "SIZE_MAX"
             if field.length_field_id:
                 count = self.fields[field.length_field_id]
-                count_type = f"&{self.descriptors[count.type_id]}"
+                count_type = self._type_pointer(
+                    count.type_id,
+                    self._field_expression(record, (count.name,)),
+                )
                 count_offset = f"offsetof({record.c_type}, {count.name})"
             lines.extend(
                 (
@@ -313,15 +337,35 @@ class CGenerator:
             self.fields[layout.capacity_field_id] if layout.capacity_field_id else None
         )
         name = f"{plan.record_descriptor}_array"
+        element_type = self._type_pointer(
+            layout.element_type_id,
+            f"*(({record.c_type} *)0)->{elems.name}",
+        )
+        length_type = (
+            self._type_pointer(
+                length.type_id,
+                self._field_expression(record, (length.name,)),
+            )
+            if length
+            else "NULL"
+        )
+        capacity_type = (
+            self._type_pointer(
+                capacity.type_id,
+                self._field_expression(record, (capacity.name,)),
+            )
+            if capacity
+            else "NULL"
+        )
         return "\n".join(
             (
                 f"static const json_reflect_array_layout {name} = {{",
                 f"    .elems_offset = offsetof({record.c_type}, {elems.name}),",
-                f"    .element_type = &{self.descriptors[layout.element_type_id]},",
+                f"    .element_type = {element_type},",
                 f"    .length_offset = {'offsetof(' + record.c_type + ', ' + length.name + ')' if length else 'SIZE_MAX'},",
-                f"    .length_type = {'&' + self.descriptors[length.type_id] if length else 'NULL'},",
+                f"    .length_type = {length_type},",
                 f"    .capacity_offset = {'offsetof(' + record.c_type + ', ' + capacity.name + ')' if capacity else 'SIZE_MAX'},",
-                f"    .capacity_type = {'&' + self.descriptors[capacity.type_id] if capacity else 'NULL'},",
+                f"    .capacity_type = {capacity_type},",
                 "};",
             )
         )

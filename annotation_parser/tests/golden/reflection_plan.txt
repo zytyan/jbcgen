@@ -4,7 +4,6 @@ GeneratePlan
     enum:Kind -> jbc_type_enum_Kind
     fixed-array:3:integer:i32 -> jbc_type_fixed_array_3_integer_i32
     integer:i32 -> jbc_type_integer_i32
-    integer:u64 -> jbc_type_integer_u64
     pointer:record:Child -> jbc_type_pointer_record_Child
     record:Child -> jbc_type_Child
     record:Root -> jbc_type_Root

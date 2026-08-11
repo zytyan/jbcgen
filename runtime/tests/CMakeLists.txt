@@ -43,6 +43,13 @@ add_test(
     COMMAND json_reflect_tests
 )
 
+add_executable(json_reflect_basic_types_test test_json_reflect_basic_types.c)
+target_link_libraries(json_reflect_basic_types_test PRIVATE json_reflect_api)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(json_reflect_basic_types_test PRIVATE -fshort-enums)
+endif()
+add_test(NAME json_reflect_basic_types_test COMMAND json_reflect_basic_types_test)
+
 if(UNIX AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     add_executable(
         json_allocator_contract_test
@@ -73,7 +80,7 @@ if(UNIX AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(ENABLE_SANITIZERS)
-    set(SANITIZER_TESTS json_reflect_tests)
+    set(SANITIZER_TESTS json_reflect_tests json_reflect_basic_types_test)
     if(TARGET json_allocator_contract_test)
         list(APPEND SANITIZER_TESTS json_allocator_contract_test)
     endif()

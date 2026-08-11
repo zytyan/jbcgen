@@ -35,7 +35,7 @@ validator 在构建前检查注解命令和参数词汇表；`SchemaBuilder` 负
 
 C generator 使用 5 个固定完整模板，生成 `static const` 类型、record、field、key、storage 和 array-layout 描述表，以及公开 decode/cleanup 的薄包装函数。key entry 只包含 key 和 field ID，按 UTF-8 `(len, memcmp)` 排序后由 runtime 二分查找。通用对象/数组控制流、required、约束、失败回滚与 cleanup 都位于 `json_reflect.c`；生成代码不包含逐字段 callback。
 
-描述符中的偏移和大小使用 C 的 `offsetof` 与 `sizeof`，不固化 Clang 计算出的数字。整数、enum、浮点和指针值通过固定宽度临时值及 `memcpy` 访问，沿用 64 位 LP64 假设。JSON binding 字段表与物理 storage 表分离，因此 flatten 和 alias 不会造成重复释放。描述符是生成代码与 runtime 之间的内部接口，不承诺第三方 ABI 稳定性。
+描述符中的偏移和大小使用 C 的 `offsetof` 与 `sizeof`，不固化 Clang 计算出的数字。bool、基础整数和浮点字段通过 `JSON_REFLECT_BASIC_TYPE(真实字段表达式)` 触发 C11 `_Generic`，由最终编译器选择 kind、`sizeof(type) * CHAR_BIT` 和 signedness；typedef 自动匹配兼容基础类型。enum 的 kind 保持显式，bits 和 signedness 同样从实际 enum 类型派生。数组元素 target 所需的共享基础描述符使用同一泛型初始化宏生成。整数、enum、浮点和指针值通过固定宽度临时值及 `memcpy` 访问，沿用 64 位 LP64 假设。JSON binding 字段表与物理 storage 表分离，因此 flatten 和 alias 不会造成重复释放。描述符是生成代码与 runtime 之间的内部接口，不承诺第三方 ABI 稳定性。
 
 ## CLI
 
