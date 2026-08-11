@@ -58,21 +58,25 @@ Clang Frontend AstType
              │
              ▼
        GeneratePlan
-         ├── C decoder
-         └── C cleanup
+             │
+             ▼
+    C reflection descriptors
+             │
+             ▼
+  Runtime generic decode/release
 ```
 
-每个 `TypePlan` 同时保存 decode/release helper、字段分派、类型依赖和失败回滚关系。Decode 失败调用同一 TypePlan 的 release helper，不再维护互相重复的 Decode Plan、Release Plan 或插件状态。`omitempty` 保存在字段 Schema 中，供未来 encoder 使用。
+每个 `TypePlan` 保存描述符名称、字段路径、排序后的 key 表、物理资源字段和类型依赖。Decode 与 release 使用同一个类型描述符；失败路径直接调用通用 reflection release，不再维护互相重复的 Decode Plan、Release Plan 或插件状态。`omitempty` 保存在字段 Schema 中，供未来 encoder 使用。
 
 注解词汇表由 validator 在构建前检查；`SchemaBuilder` 只处理形成结构化 Schema 所需的类型解析、引用关联、数组布局和所有权派生。constraints、计数字段类型、binding/key 冲突及 ownership 组合规则由独立的 `validate_schema()` 在完整 Schema 上统一验证；`build_schema()` 只返回验证通过的结果。
 
-生成器使用 10 个固定的完整 C 模板（文件、错误辅助、key map、对象/数组解码、字段解码、对象/数组释放和公开入口）。对象 key map 的 entry 保存 key、字段 ID 与字段 decode callback；map 按 UTF-8 字节的 `(len, memcmp)` 排序并二分查找，因此对象主 decoder 只负责控制流，各字段实现位于独立的 `decode_<Record>_field_<path>` helper 中。
+生成器使用 5 个固定模板，输出类型、字段、key、资源存储和 array-layout 的 `static const` 描述表，以及很薄的公开 decode/cleanup 包装函数。key entry 只保存 key 和字段 ID；map 按 UTF-8 字节的 `(len, memcmp)` 排序并二分查找。通用控制流、错误处理和资源回滚位于 `runtime/json_reflect.c`，生成结果不再包含大段重复流程代码或字段 callback。
 
 Python 前端和注解说明见 [annotation_parser/README.md](annotation_parser/README.md)。
 
 ## C部分
 
-`runtime` 提供单遍扫描的 pull parser、结构化错误、字符串与动态数组辅助函数。生成的 decode 输出对象必须预先全零；失败时会回滚为全零，成功后使用对应的 cleanup 函数释放。
+`runtime` 提供单遍扫描的 pull parser、结构化错误、字符串与动态数组辅助函数，以及描述符驱动的通用 decode/release。描述符使用 `offsetof`/`sizeof` 表达 C 布局，标量经固定宽度临时值和 `memcpy` 写入。生成的 decode 输出对象必须预先全零；失败时会回滚为全零，成功后使用对应的 cleanup 函数释放。
 
 当前使用 Python 3.13、Clang、C11，并按 64 位 LP64 数据模型解释基础整数类型。
 

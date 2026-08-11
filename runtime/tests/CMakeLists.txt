@@ -4,6 +4,7 @@ cmake_minimum_required(VERSION 3.14)
 set(JSON_OBJS_TEST_SRC
         test_json_tokenizer.cpp
         test_json_pull.cpp
+        test_json_reflect.cpp
         test_json_decode_string.cpp
         test_json_key_dispatch.cpp
         test_json_str_slice.cpp

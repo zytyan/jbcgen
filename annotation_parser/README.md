@@ -17,8 +17,12 @@ Clang JSON AST + documentation comments
                   │
                   ▼
             GeneratePlan
-             ├── C decoder
-             └── C cleanup
+                  │
+                  ▼
+       C reflection descriptors
+                  │
+                  ▼
+       generic decode / release
 ```
 
 Clang frontend 负责 typedef 展开以及基础类型、enum、record、指针和数组的结构化解析。传入 Schema Builder 的字段和函数签名已经是不可变的 `AstType` 树；Schema 层不再解析 `qualType` 字符串。
@@ -27,9 +31,11 @@ Clang frontend 负责 typedef 展开以及基础类型、enum、record、指针�
 
 validator 在构建前检查注解命令和参数词汇表；`SchemaBuilder` 负责构造类型图、解析引用、建立数组布局并派生所有权；独立的 `validate_schema()` 在完整 Schema 上检查 constraints、计数字段、binding/key 冲突和 ownership 组合。无法形成结构化 Schema 的错误（例如未知 C 类型或缺失引用字段）仍由 Builder 就地报告。
 
-`GeneratePlan` 是唯一生成计划。每个 `TypePlan` 同时保存 decode/release helper、字段路径、排序后的 key 表、类型依赖及失败回滚目标；类型和约束仍引用 Schema，不复制。Schema 和 GeneratePlan 均能打印确定性调试文本；打印结果不能反向解析，也不承诺跨版本兼容。
+`GeneratePlan` 是唯一生成计划。每个 `TypePlan` 保存描述符名称、字段路径、排序后的 key 表、物理资源字段和类型依赖；类型和约束仍引用 Schema，不复制。Schema 和 GeneratePlan 均能打印确定性调试文本；打印结果不能反向解析，也不承诺跨版本兼容。
 
-C generator 使用 10 个固定完整模板，并用小型 renderer 填充类型相关语句。对象 key entry 由 `key`、seen/field ID 和 decode callback 组成，按 UTF-8 `(len, memcmp)` 排序后由 runtime 二分查找。对象主 decoder 只处理 JSON 对象控制流、重复 key 与 required 检查；每个字段的解码在独立的 `jbc_decode_<Record>_field_<path>` 函数中，便于阅读生成结果。
+C generator 使用 5 个固定完整模板，生成 `static const` 类型、record、field、key、storage 和 array-layout 描述表，以及公开 decode/cleanup 的薄包装函数。key entry 只包含 key 和 field ID，按 UTF-8 `(len, memcmp)` 排序后由 runtime 二分查找。通用对象/数组控制流、required、约束、失败回滚与 cleanup 都位于 `json_reflect.c`；生成代码不包含逐字段 callback。
+
+描述符中的偏移和大小使用 C 的 `offsetof` 与 `sizeof`，不固化 Clang 计算出的数字。整数、enum、浮点和指针值通过固定宽度临时值及 `memcpy` 访问，沿用 64 位 LP64 假设。JSON binding 字段表与物理 storage 表分离，因此 flatten 和 alias 不会造成重复释放。描述符是生成代码与 runtime 之间的内部接口，不承诺第三方 ABI 稳定性。
 
 ## CLI
 
@@ -89,7 +95,7 @@ typedef struct {
 - 未被 `elems`、`len`、`cap` 引用的字段不参与解码和 cleanup，并保持零值。
 - 没有 `len` 和 `cap` 时，元素类型必须无需逐元素释放。
 - 具名结构体和匿名 typedef 均支持。数组形状的结构体不能用于 `flatten`。
-- array-record 使用一个 TypePlan 同时描述解码、释放和失败回滚；调试打印会显示存储字段及计数来源。
+- array-record 使用同一个类型描述符驱动解码、释放和失败回滚；调试打印会显示存储字段及计数来源。
 
 ## 支持的 C 类型
 
@@ -116,7 +122,7 @@ typedef struct {
 - cap-only 资源元素容器按容量 cleanup；生成器依赖 `json_any_vec` 将未使用槽位置零，从而安全重复释放。
 - 空 JSON 字符串分配一个 NUL 字节，以区别于 null。
 - `char *` 与 `char[N]` 拒绝嵌入 NUL；字符串长度按解码后的 UTF-8 字节计算。
-- 失败时调用同一 TypePlan 的 release helper 深度回滚并清零；cleanup 可重复调用。
+- 失败时调用通用 reflection release 深度回滚并清零；cleanup 可重复调用。
 
 ## 测试
 
