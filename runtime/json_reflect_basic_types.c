@@ -4,7 +4,6 @@
 
 #define BASIC_TYPE(name, type_kind, basic_kind, c_type, type_flags)                                \
     const json_reflect_type json_reflect_type_##name = {                                           \
-        JSON_REFLECT_TYPE_ABI_INIT,                                                                \
         .kind = type_kind,                                                                         \
         .basic_id = basic_kind,                                                                    \
         .bits = sizeof(c_type) * CHAR_BIT,                                                         \

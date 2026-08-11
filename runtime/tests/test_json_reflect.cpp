@@ -29,10 +29,7 @@ json_slice slice(const char *text) { return {text, std::strlen(text)}; }
 
 struct FixtureDescriptors {
     json_reflect_type uint64_type{json_reflect_type_unsigned_long};
-    json_reflect_type string_type{JSON_REFLECT_ABI_VERSION,
-                                  sizeof(json_reflect_type),
-                                  JSON_REFLECT_ABI_SIGNATURE,
-                                  JSON_REFLECT_STRING,
+    json_reflect_type string_type{JSON_REFLECT_STRING,
                                   0,
                                   0,
                                   sizeof(char *),
@@ -70,9 +67,6 @@ struct FixtureDescriptors {
             JSON_REFLECT_OBJECT, sizeof(ReflectedValue), {keys, 3}, fields, 2, storage, 1, nullptr,
         };
         root_type = {
-            JSON_REFLECT_ABI_VERSION,
-            sizeof(json_reflect_type),
-            JSON_REFLECT_ABI_SIGNATURE,
             JSON_REFLECT_RECORD,
             0,
             0,
@@ -99,21 +93,6 @@ TEST(JsonReflectTest, DecodesExactUint64ConstraintsAndReleasesStorage)
 
     json_reflect_release(&allocator, &descriptors.root_type, &value);
     json_reflect_release(&allocator, &descriptors.root_type, &value);
-    EXPECT_EQ(value.id, 0U);
-    EXPECT_EQ(value.name, nullptr);
-}
-
-TEST(JsonReflectTest, RejectsIncompatibleDescriptorBeforeDecoding)
-{
-    FixtureDescriptors descriptors;
-    descriptors.root_type.abi_signature ^= UINT64_C(1);
-    json_allocator allocator{system_malloc, system_free};
-    json_parser parser{};
-    json_parser_init(&parser, &allocator, slice("{}"));
-    ReflectedValue value{};
-
-    EXPECT_FALSE(json_reflect_decode(&parser, &descriptors.root_type, &value));
-    EXPECT_EQ(parser.error.code, JSON_ERROR_OTHER_ABI_MISMATCH);
     EXPECT_EQ(value.id, 0U);
     EXPECT_EQ(value.name, nullptr);
 }
@@ -213,10 +192,7 @@ TEST(JsonReflectTest, FixedStringChecksDecodedLengthAndEmbeddedNul)
 {
     json_allocator allocator{system_malloc, system_free};
     const json_reflect_type string_type{
-        JSON_REFLECT_ABI_VERSION, sizeof(json_reflect_type), JSON_REFLECT_ABI_SIGNATURE,
-        JSON_REFLECT_STRING,     0,                         0,
-        sizeof(char[4]),         4,                         nullptr,
-        nullptr};
+        JSON_REFLECT_STRING, 0, 0, sizeof(char[4]), 4, nullptr, nullptr};
     json_reflect_constraints constraints{};
     constraints.flags = JSON_REFLECT_HAS_MIN_LENGTH | JSON_REFLECT_HAS_MAX_LENGTH;
     constraints.min_length = 1;
@@ -238,10 +214,7 @@ TEST(JsonReflectTest, FixedStringChecksDecodedLengthAndEmbeddedNul)
 TEST(JsonReflectTest, ArrayRecordDelaysAllocationAndRollsBackEveryElement)
 {
     const json_reflect_type string_type{
-        JSON_REFLECT_ABI_VERSION, sizeof(json_reflect_type), JSON_REFLECT_ABI_SIGNATURE,
-        JSON_REFLECT_STRING,     0,                         0,
-        sizeof(char *),          0,                         nullptr,
-        nullptr};
+        JSON_REFLECT_STRING, 0, 0, sizeof(char *), 0, nullptr, nullptr};
     const json_reflect_type &length_type = json_reflect_type_unsigned_char;
     const json_reflect_array_layout layout{
         offsetof(ReflectedStringArray, elements),
@@ -262,9 +235,6 @@ TEST(JsonReflectTest, ArrayRecordDelaysAllocationAndRollsBackEveryElement)
         &layout,
     };
     const json_reflect_type array_type{
-        JSON_REFLECT_ABI_VERSION,
-        sizeof(json_reflect_type),
-        JSON_REFLECT_ABI_SIGNATURE,
         JSON_REFLECT_RECORD,
         0,
         0,

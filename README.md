@@ -28,10 +28,11 @@ annotation-parser --help
 
 Runtime 目前没有安装规则，推荐把本仓库作为 CMake 子目录引入，目标名为 `json_reflect_api`。
 
-共享库构建使用 ABI 主版本 `1`，生成代码会强制引用
-`json_reflect_abi_v1`。`json_reflect_type` 同时保存 ABI 版本、结构大小以及由
-公开结构布局和 plain `char` signedness 计算出的编译环境指纹；不匹配时解码
-返回 `JSON_ERROR_OTHER_ABI_MISMATCH`，cleanup 安全跳过。runtime、生成的
+共享库构建使用 ABI 主版本 `1`。生成代码通过宏引用版本化符号
+`json_reflect_check_abi_v1`，因此 ABI 主版本不匹配会在链接时失败；公开 wrapper
+同时将本编译单元根据基本类型宽度/对齐、公开结构布局和 plain `char` signedness 计算出的 64 位指纹
+传给 runtime，不匹配时解码返回 `JSON_ERROR_OTHER_ABI_MISMATCH`，cleanup 安全跳过。
+ABI 信息只检查一次，不存入每个类型描述符。runtime、生成的
 reflection `.c` 和使用用户结构体的目标必须使用相同的 target ABI、packing、
 `-fsigned-char`/`-funsigned-char` 及影响头文件布局的宏。所有公开枚举使用固定
 宽度存储，不受 `-fshort-enums` 影响。

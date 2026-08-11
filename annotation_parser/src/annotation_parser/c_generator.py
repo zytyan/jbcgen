@@ -127,7 +127,6 @@ class CGenerator:
         return "\n".join(
             (
                 f"static const json_reflect_type {self.descriptors[item.id]} = {{",
-                "    JSON_REFLECT_TYPE_ABI_INIT,",
                 f"    .kind = {self._kind(item)},",
                 f"    .basic_id = {basic_id},",
                 f"    .bits = {bits},",

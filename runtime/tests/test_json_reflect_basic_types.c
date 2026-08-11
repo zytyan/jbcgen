@@ -39,7 +39,6 @@ static const json_reflect_type *const types[] = {
 };
 
 static const json_reflect_type enum_type = {
-    JSON_REFLECT_TYPE_ABI_INIT,
     .kind = JSON_REFLECT_ENUM,
     .basic_id = JSON_REFLECT_BASIC_ID((signed_enum){0}),
     .bits = sizeof(signed_enum) * CHAR_BIT,
@@ -49,8 +48,7 @@ static const json_reflect_type enum_type = {
 
 int main(void)
 {
-    assert(json_reflect_abi_guard(&json_reflect_abi_v1));
-    assert(json_reflect_type_abi_compatible(&enum_type));
+    assert(JSON_REFLECT_ABI_CHECK());
     assert(sizeof(json_token_kind) == sizeof(uint8_t));
     assert(sizeof(json_error_code) == sizeof(uint8_t));
     assert(sizeof(json_expected_type) == sizeof(uint8_t));

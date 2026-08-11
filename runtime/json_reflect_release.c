@@ -149,8 +149,7 @@ void json_reflect_release(
     void *value
 )
 {
-    if (allocator == NULL || value == NULL ||
-        !json_reflect_type_abi_compatible(type)) {
+    if (allocator == NULL || type == NULL || value == NULL) {
         return;
     }
     if (type->kind == JSON_REFLECT_STRING && type->capacity == 0) {
