@@ -54,6 +54,8 @@ Clang Frontend AstType
           ▼
           Schema
              │
+      validate_schema
+             │
              ▼
        GeneratePlan
          ├── C decoder
@@ -61,6 +63,8 @@ Clang Frontend AstType
 ```
 
 每个 `TypePlan` 同时保存 decode/release helper、字段分派、类型依赖和失败回滚关系。Decode 失败调用同一 TypePlan 的 release helper，不再维护互相重复的 Decode Plan、Release Plan 或插件状态。`omitempty` 保存在字段 Schema 中，供未来 encoder 使用。
+
+注解词汇表由 validator 在构建前检查；`SchemaBuilder` 只处理形成结构化 Schema 所需的类型解析、引用关联、数组布局和所有权派生。constraints、计数字段类型、binding/key 冲突及 ownership 组合规则由独立的 `validate_schema()` 在完整 Schema 上统一验证；`build_schema()` 只返回验证通过的结果。
 
 生成器使用 10 个固定的完整 C 模板（文件、错误辅助、key map、对象/数组解码、字段解码、对象/数组释放和公开入口）。对象 key map 的 entry 保存 key、字段 ID 与字段 decode callback；map 按 UTF-8 字节的 `(len, memcmp)` 排序并二分查找，因此对象主 decoder 只负责控制流，各字段实现位于独立的 `decode_<Record>_field_<path>` helper 中。
 

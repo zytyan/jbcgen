@@ -13,6 +13,8 @@ Clang JSON AST + documentation comments
                ▼
                Schema
                   │
+          `validate_schema`
+                  │
                   ▼
             GeneratePlan
              ├── C decoder
@@ -22,6 +24,8 @@ Clang JSON AST + documentation comments
 Clang frontend 负责 typedef 展开以及基础类型、enum、record、指针和数组的结构化解析。传入 Schema Builder 的字段和函数签名已经是不可变的 `AstType` 树；Schema 层不再解析 `qualType` 字符串。
 
 `Schema` 是唯一语义来源，直接保存 type、record、field、function、稳定 ID、JSON key、required、flatten、约束、数组布局、所有权和 `omitempty`。注解词汇表是内建静态定义，不提供外部 Schema 插件接口。
+
+validator 在构建前检查注解命令和参数词汇表；`SchemaBuilder` 负责构造类型图、解析引用、建立数组布局并派生所有权；独立的 `validate_schema()` 在完整 Schema 上检查 constraints、计数字段、binding/key 冲突和 ownership 组合。无法形成结构化 Schema 的错误（例如未知 C 类型或缺失引用字段）仍由 Builder 就地报告。
 
 `GeneratePlan` 是唯一生成计划。每个 `TypePlan` 同时保存 decode/release helper、字段路径、排序后的 key 表、类型依赖及失败回滚目标；类型和约束仍引用 Schema，不复制。Schema 和 GeneratePlan 均能打印确定性调试文本；打印结果不能反向解析，也不承诺跨版本兼容。
 

@@ -3,6 +3,7 @@ from .c_generator import generate_c
 from .clang_frontend import AstType, AstTypeKind, ClangFrontend, TranslationUnit
 from .generate_plan import GeneratePlan, build_generate_plan, format_generate_plan
 from .schema import Schema, build_schema, format_schema
+from .schema_validator import validate_schema
 
 __all__ = [
     "Annotation",
@@ -19,6 +20,7 @@ __all__ = [
     "format_schema",
     "generate_c",
     "parse_annotations",
+    "validate_schema",
 ]
 
 
