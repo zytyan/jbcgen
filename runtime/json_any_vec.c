@@ -46,19 +46,3 @@ bool json_any_vec_reserve(json_allocator *allocator, json_any_vec *vec, size_t a
     memset(reserved_begin, 0, reserved_size);
     return true;
 }
-
-bool json_any_vec_init(json_allocator *allocator, json_any_vec *vec, size_t reserved)
-{
-    *vec = (json_any_vec){0};
-    return json_any_vec_reserve(allocator, vec, reserved);
-}
-
-// 由于一定会被move走所有权，所以不设计free功能，由被move的家伙们free
-void json_any_vec_move_to(json_any_vec *vec, void **elems, size_t *count, size_t elem_size)
-{
-    *elems = vec->data;
-    *count = vec->byte_len / elem_size;
-    vec->data = NULL;
-    vec->byte_len = 0;
-    vec->byte_cap = 0;
-}

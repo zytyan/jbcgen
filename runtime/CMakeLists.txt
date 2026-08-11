@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(json_c_generator LANGUAGES C CXX)
+project(json_reflect_api LANGUAGES C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -28,7 +28,7 @@ if(ENABLE_SANITIZERS)
     endif()
 endif()
 
-add_library(zjson_pull_api
+add_library(json_reflect_api
     json_any_vec.c
     json_error.c
     json_key_dispatch.c
@@ -41,9 +41,8 @@ add_library(zjson_pull_api
     json_reflect_support.c
     json_str_slice.c
     json_tokenizer.c
-    json_writer.c
 )
-target_include_directories(zjson_pull_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(json_reflect_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 include(CTest)
 if(BUILD_TESTING)

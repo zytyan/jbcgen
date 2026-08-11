@@ -18,10 +18,6 @@ typedef struct json_any_vec {
 
 bool json_any_vec_reserve(json_allocator *allocator, json_any_vec *vec, size_t additional);
 
-bool json_any_vec_init(json_allocator *allocator, json_any_vec *vec, size_t reserved);
-
-void json_any_vec_move_to(json_any_vec *vec, void **elems, size_t *count, size_t elem_size);
-
 #ifdef __cplusplus
 }
 #endif

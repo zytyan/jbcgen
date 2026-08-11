@@ -106,14 +106,6 @@ TEST_F(JsonPullTest, SimpleObject)
     EXPECT_TRUE(json_object_try_end(&parser));
 }
 
-TEST_F(JsonPullTest, ConsumeComma)
-{
-    json_parser parser;
-    json_parser_init(&parser, &allocator, make_slice(","));
-    bool result = json_try_consume_comma(&parser);
-    EXPECT_TRUE(result);
-}
-
 TEST_F(JsonPullTest, ConsumeCommaReportsMissingComma)
 {
     json_parser parser;
@@ -154,14 +146,6 @@ TEST_F(JsonPullTest, ConsumeColon)
     json_parser_init(&parser, &allocator, make_slice(":"));
     bool result = json_consume_colon(&parser);
     EXPECT_TRUE(result);
-}
-
-TEST_F(JsonPullTest, FreeNullable)
-{
-    json_parser parser;
-    json_parser_init(&parser, &allocator, make_slice("null"));
-    void *ptr = malloc(64);
-    json_free_nullable(parser.allocator, ptr);
 }
 
 TEST_F(JsonPullTest, ParseInt64)
@@ -259,43 +243,6 @@ TEST_F(JsonPullTest, ParseFloat64)
     }
 }
 
-TEST_F(JsonPullTest, ParseHexUint64String)
-{
-    struct {
-        const char *input;
-        uint64_t expected;
-    } success_cases[] = {
-        {R"json("0x0")json", 0},
-        {R"json("0Xff")json", 255},
-        {R"json("0xffffffffffffffff")json", UINT64_MAX},
-        {"42", 42},
-    };
-
-    for (const auto &test : success_cases) {
-        json_parser parser{};
-        json_parser_init(&parser, &allocator, make_slice(test.input));
-        uint64_t value = 0;
-        EXPECT_TRUE(json_decode_hex_string(&parser, &value)) << test.input << ": " << format_error(parser);
-        EXPECT_EQ(value, test.expected);
-        EXPECT_EQ(json_peek_token(&parser)->kind, JSON_TOKEN_EOF);
-    }
-
-    const char *failure_cases[] = {
-        R"json("ff")json",
-        R"json("0x")json",
-        R"json("-0x1")json",
-        R"json("0x10000000000000000")json",
-        "-1",
-    };
-    for (const char *input : failure_cases) {
-        json_parser parser{};
-        json_parser_init(&parser, &allocator, make_slice(input));
-        uint64_t value = 0;
-        EXPECT_FALSE(json_decode_hex_string(&parser, &value)) << input;
-        EXPECT_FALSE(parser.valid) << input;
-    }
-}
-
 TEST_F(JsonPullTest, ParseIntArray)
 {
     const char *json = R"json(
@@ -322,7 +269,7 @@ TEST_F(JsonPullTest, ParseIntArray)
         if (json_array_try_end(&parser)) {
             break;
         }
-        json_try_consume_comma(&parser);
+        json_consume_comma(&parser);
         ASSERT_TRUE(parser.valid) << "i = " << i << ", " << format_error(parser);
     }
     ASSERT_TRUE(parser.valid) << format_error(parser);
@@ -359,7 +306,6 @@ TEST_F(JsonPullTest, FormatsAllErrorKinds)
         json_error_detail detail;
         const char *expected;
     };
-    const char duplicate[] = "name";
     ErrorCase cases[] = {
         {JSON_ERROR_SYNTAX_UNKNOWN_CHARACTER, {.syntax = {.character = '@'}}, "unknown character 0x40"},
         {JSON_ERROR_SYNTAX_INVALID_KEYWORD, {}, "invalid keyword"},
@@ -367,7 +313,6 @@ TEST_F(JsonPullTest, FormatsAllErrorKinds)
          "unescaped control character 0x01 in string"},
         {JSON_ERROR_SYNTAX_UNTERMINATED_STRING, {}, "unterminated string"},
         {JSON_ERROR_SYNTAX_INVALID_NUMBER, {}, "invalid number"},
-        {JSON_ERROR_SYNTAX_INVALID_HEX, {}, "invalid hexadecimal integer"},
         {JSON_ERROR_SYNTAX_EXPECTED_TOKEN, {.syntax = {.expected = JSON_TOKEN_STRING, .actual = JSON_TOKEN_COMMA}},
          "expected STRING, got COMMA"},
         {JSON_ERROR_SYNTAX_EXPECTED_COMMA, {.syntax = {.actual = JSON_TOKEN_RBRACE}},
@@ -381,8 +326,6 @@ TEST_F(JsonPullTest, FormatsAllErrorKinds)
         {JSON_ERROR_RANGE_DEPTH, {.range = {.limit = 3}}, "JSON depth exceeds limit 3"},
         {JSON_ERROR_RANGE_BUFFER_TOO_SMALL, {.range = {.limit = 9}}, "output buffer too small; need 9 bytes"},
         {JSON_ERROR_OTHER_NO_MEMORY, {}, "out of memory"},
-        {JSON_ERROR_OTHER_DUPLICATE_KEY,
-         {.other = {.context = {duplicate, duplicate + sizeof(duplicate) - 1}}}, "duplicate key: name"},
         {JSON_ERROR_OTHER_INVALID_STATE, {}, "invalid parser state"},
     };
 
@@ -410,11 +353,11 @@ TEST_F(JsonPullTest, FormatsEntireEstimatedErrorMessage)
 {
     std::string key(300, 'k');
     json_parser parser{};
-    parser.error.code = JSON_ERROR_OTHER_DUPLICATE_KEY;
+    parser.error.code = JSON_ERROR_OTHER_MISSING_REQUIRED_KEY;
     parser.error.location = {0, 12, 34};
     parser.error.detail.other.context = {key.data(), key.data() + key.size()};
 
-    const std::string expected = "line 12, column 34: duplicate key: " + key;
+    const std::string expected = "line 12, column 34: missing required key: " + key;
     const size_t needed = json_estimate_error_msg_len(&parser);
     ASSERT_EQ(needed, expected.size());
 
@@ -476,19 +419,6 @@ TEST_F(JsonPullTest, ReportsNumberAndDepthRanges)
     EXPECT_FALSE(json_array_begin(&parser));
     EXPECT_EQ(parser.error.code, JSON_ERROR_RANGE_DEPTH);
     EXPECT_EQ(parser.error.detail.range.limit, 1u);
-}
-
-TEST_F(JsonPullTest, SeparatesInvalidAndOutOfRangeHex)
-{
-    json_parser parser{};
-    uint64_t value = 0;
-    json_parser_init(&parser, &allocator, make_slice(R"json("ff")json"));
-    EXPECT_FALSE(json_decode_hex_string(&parser, &value));
-    EXPECT_EQ(parser.error.code, JSON_ERROR_SYNTAX_INVALID_HEX);
-
-    json_parser_init(&parser, &allocator, make_slice(R"json("0x10000000000000000")json"));
-    EXPECT_FALSE(json_decode_hex_string(&parser, &value));
-    EXPECT_EQ(parser.error.code, JSON_ERROR_RANGE_NUMBER);
 }
 
 TEST_F(JsonPullTest, ReportsAllocationFailure)

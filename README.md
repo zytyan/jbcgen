@@ -1,6 +1,6 @@
 # jbcgen
 
-从 C 结构体和文档注释生成 C11 JSON 解码器与资源释放函数。
+从 C 结构体和文档注释生成 C11 JSON 反射描述符，以及基于描述符的解码与资源释放 API。
 
 
 ## 快速开始
@@ -74,9 +74,16 @@ Clang Frontend AstType
 
 Python 前端和注解说明见 [annotation_parser/README.md](annotation_parser/README.md)。
 
-## C部分
+## Runtime
 
-`runtime` 提供单遍扫描的 pull parser、结构化错误、字符串与动态数组辅助函数，以及描述符驱动的通用 decode/release。描述符使用 `offsetof`/`sizeof` 表达 C 布局，标量经固定宽度临时值和 `memcpy` 写入。生成的 decode 输出对象必须预先全零；失败时会回滚为全零，成功后使用对应的 cleanup 函数释放。
+`runtime` 的唯一库目标是 `json_reflect_api`，提供反射 decode/release 所需的单遍 pull parser、结构化错误、字符串和动态数组支撑。描述符使用 `offsetof`/`sizeof` 表达 C 布局，标量经固定宽度临时值和 `memcpy` 写入。生成的 decode 输出对象必须预先全零；失败时会回滚为全零，成功后使用对应的 cleanup 函数释放。
+
+```sh
+cmake -S runtime -B build
+cmake --build build --target json_reflect_api
+```
+
+当前不提供 writer 或 encoder；在 Encode Plan 的语义确定前，不为它们保留独立 runtime 接口。
 
 当前使用 Python 3.13、Clang、C11，并按 64 位 LP64 数据模型解释基础整数类型。
 

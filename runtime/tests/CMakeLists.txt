@@ -1,48 +1,46 @@
 cmake_minimum_required(VERSION 3.14)
 
 # Test source files
-set(JSON_OBJS_TEST_SRC
+set(JSON_REFLECT_TEST_SOURCES
         test_json_tokenizer.cpp
         test_json_pull.cpp
         test_json_reflect.cpp
         test_json_decode_string.cpp
         test_json_key_dispatch.cpp
         test_json_str_slice.cpp
-        test_json_writer.cpp
         test_generated_decoder.cpp
         tracking_allocator.cpp
         ${GENERATED_SOURCE}
-        ${GENERATED_TEST}
 )
 
 set_source_files_properties(${GENERATED_SOURCE} PROPERTIES GENERATED TRUE)
 
 add_executable(
-    zjson_test
-    ${JSON_OBJS_TEST_SRC}
+    json_reflect_tests
+    ${JSON_REFLECT_TEST_SOURCES}
 )
-add_dependencies(zjson_test generate_example_json)
+add_dependencies(json_reflect_tests generate_example_json)
 
 target_link_libraries(
-    zjson_test
+    json_reflect_tests
     PRIVATE
     GTest::gtest_main
-    zjson_pull_api
+    json_reflect_api
 )
 
-target_include_directories(zjson_test PRIVATE
+target_include_directories(json_reflect_tests PRIVATE
     ${GENERATED_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../..
 )
 
 include(GoogleTest)
 if(NOT ENABLE_SANITIZERS)
-    gtest_discover_tests(zjson_test)
+    gtest_discover_tests(json_reflect_tests)
 endif()
 
 add_test(
-    NAME zjson_test
-    COMMAND zjson_test
+    NAME json_reflect_tests
+    COMMAND json_reflect_tests
 )
 
 if(UNIX AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -52,7 +50,7 @@ if(UNIX AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         ${GENERATED_SOURCE}
     )
     add_dependencies(json_allocator_contract_test generate_example_json)
-    target_link_libraries(json_allocator_contract_test PRIVATE zjson_pull_api)
+    target_link_libraries(json_allocator_contract_test PRIVATE json_reflect_api)
     target_include_directories(json_allocator_contract_test PRIVATE
         ${GENERATED_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/../..
@@ -75,7 +73,7 @@ if(UNIX AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(ENABLE_SANITIZERS)
-    set(SANITIZER_TESTS zjson_test)
+    set(SANITIZER_TESTS json_reflect_tests)
     if(TARGET json_allocator_contract_test)
         list(APPEND SANITIZER_TESTS json_allocator_contract_test)
     endif()

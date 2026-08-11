@@ -139,4 +139,4 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Runtime 的 CMake 测试会生成、编译并执行 `example/example.h` 对应的 decoder。
+Runtime 的 CMake 库目标为 `json_reflect_api`。其测试会生成、编译并执行 `example/example.h` 对应的 decoder；当前不生成 encoder，也不包含 writer runtime。

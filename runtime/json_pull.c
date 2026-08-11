@@ -3,7 +3,7 @@
 #include "json_pull.h"
 #include "json_str_slice.h"
 #include "json_tokenizer.h"
-void json_free_nullable(const json_allocator *allocator, void *ptr)
+static void json_free_nullable(const json_allocator *allocator, void *ptr)
 {
     if (ptr) {
         allocator->free(ptr);
@@ -328,69 +328,6 @@ bool json_decode_u64(json_parser *parser, uint64_t *out)
     return true;
 }
 
-bool json_decode_hex_string(json_parser *parser, uint64_t *out)
-{
-    if (out == NULL) {
-        json_set_error(parser, JSON_ERROR_OTHER_INVALID_STATE, NULL);
-        return false;
-    }
-
-    json_token *token = json_peek_token(parser);
-    json_source_location value_location = token->location;
-    json_error_span value_span = {token->str.ptr, token->str.ptr + token->str.len};
-    bool is_hex_string = token->kind == JSON_TOKEN_STRING || token->kind == JSON_TOKEN_ESCAPE_STRING;
-    bool is_integer = token->kind == JSON_TOKEN_INT;
-    if (!is_hex_string && !is_integer) {
-        json_set_type_mismatch(parser, JSON_EXPECTED_HEX_INTEGER);
-        return false;
-    }
-
-    json_cow_str decoded = {0};
-    if (is_hex_string) {
-        if (!json_decode_string(parser, &decoded)) {
-            json_free_cow_str(parser->allocator, &decoded);
-            return false;
-        }
-    } else {
-        json_cow_str_borrow(&token->str, &decoded);
-    }
-
-    char *text = NULL;
-    json_error_code string_code = json_cow_str_into_owned_c_str(parser->allocator, &decoded, &text);
-    if (string_code != JSON_ERROR_NONE) {
-        json_free_cow_str(parser->allocator, &decoded);
-        json_set_error_at(parser, string_code, NULL, value_location);
-        return false;
-    }
-
-    bool has_hex_prefix = text[0] == '0' && (text[1] == 'x' || text[1] == 'X');
-    bool prefix_valid = is_hex_string ? has_hex_prefix : !has_hex_prefix;
-    errno = 0;
-    char *end = NULL;
-    unsigned long long parsed = strtoull(text, &end, is_hex_string ? 0 : 10);
-    bool format_valid = prefix_valid && text[0] != '-' && end != text && *end == '\0' &&
-                        (!is_hex_string || end > text + 2);
-    bool out_of_range = errno == ERANGE;
-    parser->allocator->free(text);
-
-    if (out_of_range || parsed > UINT64_MAX) {
-        json_error_detail detail = {0};
-        detail.range.target = JSON_RANGE_NUMBER_VALUE;
-        detail.range.value = value_span;
-        json_set_error_at(parser, JSON_ERROR_RANGE_NUMBER, &detail, value_location);
-        return false;
-    }
-    if (!format_valid) {
-        json_set_error_at(parser, JSON_ERROR_SYNTAX_INVALID_HEX, NULL, value_location);
-        return false;
-    }
-    if (is_integer) {
-        json_advance_token(parser);
-    }
-    *out = (uint64_t)parsed;
-    return true;
-}
-
 bool json_decode_f64(json_parser *parser, double *out)
 {
     union json_number num = {0};
@@ -502,11 +439,6 @@ bool json_object_try_end(json_parser *parser)
     return false;
 }
 
-bool json_try_consume_comma(json_parser *parser)
-{
-    return json_try_consume_token(parser, JSON_TOKEN_COMMA);
-}
-
 bool json_consume_comma(json_parser *parser)
 {
     if (json_try_consume_token(parser, JSON_TOKEN_COMMA)) {
@@ -521,7 +453,7 @@ bool json_consume_comma(json_parser *parser)
     return false;
 }
 
-// 最后一个元素没有尾随逗号，所以冒号必然要consume，但逗号不用，所以逗号仅仅try consume
+// 对象键和值之间必须存在冒号。
 bool json_consume_colon(json_parser *parser)
 {
     return json_consume_token(parser, JSON_TOKEN_COLON);

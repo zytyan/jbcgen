@@ -61,8 +61,6 @@ static const char *expected_type_name(json_expected_type type) {
     return "NUMBER";
   case JSON_EXPECTED_STRING:
     return "STRING";
-  case JSON_EXPECTED_HEX_INTEGER:
-    return "HEX_INTEGER";
   case JSON_EXPECTED_ARRAY:
     return "ARRAY";
   case JSON_EXPECTED_OBJECT:
@@ -95,8 +93,6 @@ static size_t error_body_len(const json_error *error) {
     return sizeof("unterminated string") - 1;
   case JSON_ERROR_SYNTAX_INVALID_NUMBER:
     return sizeof("invalid number") - 1;
-  case JSON_ERROR_SYNTAX_INVALID_HEX:
-    return sizeof("invalid hexadecimal integer") - 1;
   case JSON_ERROR_SYNTAX_EXPECTED_TOKEN:
     return sizeof("expected ") - 1 +
            strlen(token_kind_name(error->detail.syntax.expected)) +
@@ -133,15 +129,6 @@ static size_t error_body_len(const json_error *error) {
            decimal_len(error->detail.range.limit) + sizeof(" bytes") - 1;
   case JSON_ERROR_OTHER_NO_MEMORY:
     return sizeof("out of memory") - 1;
-  case JSON_ERROR_OTHER_DUPLICATE_KEY: {
-    size_t context_len = 0;
-    if (error->detail.other.context.begin != NULL &&
-        error->detail.other.context.end != NULL) {
-      context_len = (size_t)(error->detail.other.context.end -
-                             error->detail.other.context.begin);
-    }
-    return sizeof("duplicate key: ") - 1 + context_len;
-  }
   case JSON_ERROR_OTHER_MISSING_REQUIRED_KEY:
   case JSON_ERROR_OTHER_NULL_REQUIRED_VALUE: {
     size_t context_len = 0;
@@ -206,10 +193,6 @@ static void render_error(const json_parser *parser, char *dst,
     error_writer_append(&writer, "invalid number",
                         sizeof("invalid number") - 1);
     break;
-  case JSON_ERROR_SYNTAX_INVALID_HEX:
-    error_writer_append(&writer, "invalid hexadecimal integer",
-                        sizeof("invalid hexadecimal integer") - 1);
-    break;
   case JSON_ERROR_SYNTAX_EXPECTED_TOKEN:
     error_writer_printf(&writer, "expected %s, got %s",
                         token_kind_name(error->detail.syntax.expected),
@@ -258,16 +241,6 @@ static void render_error(const json_parser *parser, char *dst,
     break;
   case JSON_ERROR_OTHER_NO_MEMORY:
     error_writer_append(&writer, "out of memory", sizeof("out of memory") - 1);
-    break;
-  case JSON_ERROR_OTHER_DUPLICATE_KEY:
-    error_writer_append(&writer,
-                        "duplicate key: ", sizeof("duplicate key: ") - 1);
-    if (error->detail.other.context.begin != NULL &&
-        error->detail.other.context.end != NULL) {
-      error_writer_append(&writer, error->detail.other.context.begin,
-                          (size_t)(error->detail.other.context.end -
-                                   error->detail.other.context.begin));
-    }
     break;
   case JSON_ERROR_OTHER_MISSING_REQUIRED_KEY:
   case JSON_ERROR_OTHER_NULL_REQUIRED_VALUE: {
