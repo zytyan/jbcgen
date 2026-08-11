@@ -1,6 +1,7 @@
 #include "json_reflect.h"
 
 #include "gtest/gtest.h"
+#include "tracking_allocator.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -19,23 +20,6 @@ struct ReflectedStringArray {
     char **elements;
     uint8_t length;
 };
-
-size_t allocation_count;
-size_t free_count;
-
-void *tracking_malloc(size_t size)
-{
-    ++allocation_count;
-    return std::malloc(size);
-}
-
-void tracking_free(void *pointer)
-{
-    if (pointer != nullptr) {
-        ++free_count;
-    }
-    std::free(pointer);
-}
 
 void *system_malloc(size_t size)
 {
@@ -315,17 +299,16 @@ TEST(JsonReflectTest, ArrayRecordDelaysAllocationAndRollsBackEveryElement)
         nullptr,
         &record,
     };
-    json_allocator allocator{tracking_malloc, tracking_free};
+    json_allocator allocator{tracking_json_allocator()};
     json_parser parser{};
     ReflectedStringArray value{};
 
-    allocation_count = 0;
-    free_count = 0;
+    tracked_allocations.reset();
     json_parser_init(&parser, &allocator, slice("[]"));
     ASSERT_TRUE(json_reflect_decode(&parser, &array_type, &value));
     EXPECT_EQ(value.elements, nullptr);
     EXPECT_EQ(value.length, 0U);
-    EXPECT_EQ(allocation_count, 0U);
+    EXPECT_EQ(tracked_allocations.allocation_count, 0U);
 
     parser = {};
     json_parser_init(&parser, &allocator, slice(R"(["a","b"])"));
@@ -337,7 +320,7 @@ TEST(JsonReflectTest, ArrayRecordDelaysAllocationAndRollsBackEveryElement)
     json_reflect_release(&allocator, &array_type, &value);
     EXPECT_EQ(value.elements, nullptr);
     EXPECT_EQ(value.length, 0U);
-    EXPECT_EQ(allocation_count, free_count);
+    EXPECT_TRUE(tracked_allocations.clean());
 
     parser = {};
     json_parser_init(
@@ -346,7 +329,7 @@ TEST(JsonReflectTest, ArrayRecordDelaysAllocationAndRollsBackEveryElement)
     EXPECT_EQ(parser.error.code, JSON_ERROR_OTHER_EMBEDDED_NUL);
     EXPECT_EQ(value.elements, nullptr);
     EXPECT_EQ(value.length, 0U);
-    EXPECT_EQ(allocation_count, free_count);
+    EXPECT_TRUE(tracked_allocations.clean());
 }
 
 } // namespace
