@@ -22,6 +22,10 @@ def _array_size(name: str) -> str:
     return f"sizeof({name}) / sizeof({name}[0])"
 
 
+def _comment_text(value: str) -> str:
+    return value.replace("\r", r"\r").replace("\n", r"\n").replace("*/", "* /")
+
+
 @dataclass(frozen=True)
 class _Bounds:
     flags: tuple[str, ...]
@@ -38,7 +42,7 @@ class CGenerator:
         self.type_plans = plan.type_map()
         self.descriptors = plan.descriptor_map()
 
-    def generate(self, include: str) -> str:
+    def generate(self, include: str, source_header: str, source_sha256: str) -> str:
         forward = templates.render_c_template(
             templates.FORWARD_DECLARATIONS,
             type_declarations="\n".join(
@@ -66,6 +70,8 @@ class CGenerator:
             templates.render_c_template(
                 templates.C_FILE,
                 include=_c_string(include),
+                source_header=_comment_text(source_header),
+                source_sha256=source_sha256,
                 forward_declarations=forward,
                 descriptors=descriptors,
                 public_functions=public_functions,
@@ -203,8 +209,8 @@ class CGenerator:
                 )
             ):
                 continue
-            name = f"{plan.record_descriptor}_field_{field.seen_index}_constraints"
-            names[field.seen_index] = name
+            name = f"{plan.record_descriptor}_field_{field.field_index}_constraints"
+            names[field.field_index] = name
             bounds = self._bounds(schema_field)
             flags = list(bounds.flags)
             if schema_field.min_length is not None:
@@ -254,7 +260,7 @@ class CGenerator:
                 count = self._field_schema(record, field.length_path)
                 count_type = f"&{self.descriptors[count.type_id]}"
                 count_offset = self._offset(record, field.length_path)
-            constraints = constraint_names.get(field.seen_index)
+            constraints = constraint_names.get(field.field_index)
             lines.extend(
                 (
                     "    {",
@@ -362,5 +368,12 @@ class CGenerator:
         return "\n\n".join(functions)
 
 
-def generate_c(schema: Schema, plan: GeneratePlan, include: str) -> str:
-    return CGenerator(schema, plan).generate(include)
+def generate_c(
+    schema: Schema,
+    plan: GeneratePlan,
+    include: str,
+    *,
+    source_header: str,
+    source_sha256: str,
+) -> str:
+    return CGenerator(schema, plan).generate(include, source_header, source_sha256)

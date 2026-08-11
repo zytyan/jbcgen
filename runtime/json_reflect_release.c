@@ -87,6 +87,29 @@ static void release_object(
     }
 }
 
+void json_reflect_release_field(
+    json_allocator *allocator,
+    const json_reflect_field *field,
+    void *record
+)
+{
+    const json_reflect_storage storage = {
+        .offset = field->offset,
+        .type = field->type,
+        .count_offset = field->count_offset,
+        .count_type = field->count_type,
+    };
+    if (field->type->kind == JSON_REFLECT_DYNAMIC_ARRAY ||
+        field->type->kind == JSON_REFLECT_FIXED_ARRAY) {
+        release_array_storage(allocator, &storage, record);
+    } else {
+        json_reflect_release(
+            allocator, field->type, json_reflect_at(record, field->offset)
+        );
+    }
+    memset(json_reflect_at(record, field->offset), 0, field->type->size);
+}
+
 static void release_array_record(
     json_allocator *allocator,
     const json_reflect_array_layout *layout,

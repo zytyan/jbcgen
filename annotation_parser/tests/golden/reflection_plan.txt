@@ -12,19 +12,19 @@ GeneratePlan
     string:pointer -> jbc_type_string_pointer
   type record:Child shape=object descriptor=jbc_type_Child record=jbc_record_Child
     decode-failure -> json_reflect_release(self)
-    field label type=string:pointer keys=('label',) [seen=0 required]
+    field label type=string:pointer keys=('label',) [index=0 required]
     release-storage ('field:Child.label',)
     key-order (('label', 0),)
   type record:Root shape=object descriptor=jbc_type_Root record=jbc_record_Root
     decode-failure -> json_reflect_release(self)
     dependencies ('record:Child',)
-    field id type=integer:i32 keys=('identifier', 'id') [seen=0 required]
-    field name type=string:fixed:16 keys=('name',) [seen=1]
-    field children type=dynamic-array:record:Child keys=('children',) [seen=2]
+    field id type=integer:i32 keys=('identifier', 'id') [index=0 required]
+    field name type=string:fixed:16 keys=('name',) [index=1]
+    field children type=dynamic-array:record:Child keys=('children',) [index=2]
       length childCount
-    field values type=fixed-array:3:integer:i32 keys=('values',) [seen=3]
+    field values type=fixed-array:3:integer:i32 keys=('values',) [index=3]
       length valueCount
-    field optional type=pointer:record:Child keys=('optional',) [seen=4]
-    field kind type=enum:Kind keys=('kind',) [seen=5]
+    field optional type=pointer:record:Child keys=('optional',) [index=4]
+    field kind type=enum:Kind keys=('kind',) [index=5]
     release-storage ('field:Root.children', 'field:Root.optional')
     key-order (('id', 0), ('kind', 5), ('name', 1), ('values', 3), ('children', 2), ('optional', 4), ('identifier', 0))

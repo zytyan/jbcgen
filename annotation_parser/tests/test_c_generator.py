@@ -1,3 +1,4 @@
+import hashlib
 import shutil
 import subprocess
 import tempfile
@@ -45,6 +46,16 @@ void releaseRoot(json_allocator *allocator, Root *root);
 """
 
 
+def generate(schema, plan, include: str, source: str) -> str:
+    return generate_c(
+        schema,
+        plan,
+        include,
+        source_header=source,
+        source_sha256=hashlib.sha256(textwrap.dedent(HEADER).encode()).hexdigest(),
+    )
+
+
 @unittest.skipUnless(shutil.which("clang"), "clang is required")
 class CGeneratorTest(unittest.TestCase):
     def test_reflection_source_and_plan_match_golden_files(self) -> None:
@@ -55,7 +66,7 @@ class CGeneratorTest(unittest.TestCase):
             plan = build_generate_plan(schema)
 
             self.assertEqual(
-                generate_c(schema, plan, "model.h"),
+                generate(schema, plan, "model.h", "model.h"),
                 (GOLDEN / "reflection_model.c").read_text(encoding="utf-8"),
             )
             self.assertEqual(
@@ -71,7 +82,7 @@ class CGeneratorTest(unittest.TestCase):
             header.write_text(textwrap.dedent(HEADER), encoding="utf-8")
             unit = ClangFrontend().parse(header, ["-I", str(RUNTIME)])
             schema = build_schema(unit)
-            source = generate_c(schema, build_generate_plan(schema), "model.h")
+            source = generate(schema, build_generate_plan(schema), "model.h", "model.h")
             output.write_text(source, encoding="utf-8")
             process = subprocess.run(
                 [
@@ -156,7 +167,15 @@ class CGeneratorTest(unittest.TestCase):
             header.write_text(textwrap.dedent(header_source), encoding="utf-8")
             unit = ClangFrontend().parse(header, ["-I", str(RUNTIME)])
             schema = build_schema(unit)
-            source = generate_c(schema, build_generate_plan(schema), "array_model.h")
+            source = generate_c(
+                schema,
+                build_generate_plan(schema),
+                "array_model.h",
+                source_header="array_model.h",
+                source_sha256=hashlib.sha256(
+                    textwrap.dedent(header_source).encode()
+                ).hexdigest(),
+            )
             output.write_text(source, encoding="utf-8")
             process = subprocess.run(
                 [

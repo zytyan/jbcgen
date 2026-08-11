@@ -6,22 +6,12 @@ static bool decode_field(
     json_parser *parser,
     const json_reflect_record *record,
     const json_key_entry *entry,
-    unsigned char *seen,
-    json_source_location key_location,
+    unsigned char *provided,
     void *out
 )
 {
     const json_reflect_field *field = &record->fields[entry->id];
-    if (seen[entry->id] != 0) {
-        json_reflect_context_error(
-            parser,
-            JSON_ERROR_OTHER_DUPLICATE_KEY,
-            field->primary_key,
-            key_location
-        );
-        return false;
-    }
-    seen[entry->id] = 1;
+    provided[entry->id] = 1;
     if ((field->flags & JSON_REFLECT_REQUIRED) != 0 &&
         json_peek_token(parser)->kind == JSON_TOKEN_NULL) {
         json_reflect_context_error(
@@ -32,6 +22,7 @@ static bool decode_field(
         );
         return false;
     }
+    json_reflect_release_field(parser->allocator, field, out);
     void *count = field->count_type == NULL
                       ? NULL
                       : json_reflect_at(out, field->count_offset);
@@ -48,11 +39,10 @@ static bool decode_field(
 static bool decode_member(
     json_parser *parser,
     const json_reflect_record *record,
-    unsigned char *seen,
+    unsigned char *provided,
     void *out
 )
 {
-    const json_source_location key_location = json_peek_token(parser)->location;
     json_cow_str key = {0};
     if (!json_decode_string(parser, &key)) {
         return false;
@@ -68,19 +58,19 @@ static bool decode_member(
     if (entry == NULL) {
         return json_skip_value(parser);
     }
-    return decode_field(parser, record, entry, seen, key_location, out);
+    return decode_field(parser, record, entry, provided, out);
 }
 
 static bool check_required(
     json_parser *parser,
     const json_reflect_record *record,
-    const unsigned char *seen,
+    const unsigned char *provided,
     json_source_location object_end
 )
 {
     for (size_t index = 0; index < record->field_count; ++index) {
         if ((record->fields[index].flags & JSON_REFLECT_REQUIRED) != 0 &&
-            seen[index] == 0) {
+            provided[index] == 0) {
             json_reflect_context_error(
                 parser,
                 JSON_ERROR_OTHER_MISSING_REQUIRED_KEY,
@@ -100,8 +90,8 @@ bool json_reflect_decode_object(
 )
 {
     const json_reflect_record *record = type->record;
-    unsigned char seen[record->field_count == 0 ? 1 : record->field_count];
-    memset(seen, 0, sizeof(seen));
+    unsigned char provided[record->field_count == 0 ? 1 : record->field_count];
+    memset(provided, 0, sizeof(provided));
     if (!json_object_begin(parser)) {
         return false;
     }
@@ -109,11 +99,11 @@ bool json_reflect_decode_object(
     json_source_location object_end = json_peek_token(parser)->location;
     if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACE) {
         return json_object_try_end(parser) &&
-               check_required(parser, record, seen, object_end);
+               check_required(parser, record, provided, object_end);
     }
 
     while (true) {
-        if (!decode_member(parser, record, seen, out)) {
+        if (!decode_member(parser, record, provided, out)) {
             return false;
         }
         if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACE) {
@@ -127,5 +117,5 @@ bool json_reflect_decode_object(
             return false;
         }
     }
-    return check_required(parser, record, seen, object_end);
+    return check_required(parser, record, provided, object_end);
 }

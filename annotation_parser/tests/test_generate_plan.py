@@ -63,7 +63,7 @@ class GeneratePlanTest(unittest.TestCase):
             [field.path for field in root.fields],
             [("id",), ("detail", "label"), ("items",)],
         )
-        self.assertEqual([field.seen_index for field in root.fields], [0, 1, 2])
+        self.assertEqual([field.field_index for field in root.fields], [0, 1, 2])
         self.assertEqual(root.type_descriptor, "jbc_type_Root")
         self.assertEqual(root.record_descriptor, "jbc_record_Root")
         self.assertEqual(

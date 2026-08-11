@@ -53,7 +53,7 @@ PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
   -o example_json.c --include example/example.h -- -I ../runtime
 ```
 
-生成失败时不会覆盖已有输出文件。Clang 和注解错误包含文件、行、列。
+生成文件头记录来源头文件及其内容的 SHA-256。生成结果与已有文件相同时不会重写文件；生成失败时也不会覆盖已有输出。Clang 和注解错误包含文件、行、列。
 
 ## 注解
 
@@ -66,7 +66,7 @@ PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
 字段参数：
 
 - `key=name`：主 JSON key。
-- `altkey=name`：别名，可重复；任一别名与主键共享重复检测和 required 状态。
+- `altkey=name`：别名，可重复；任一别名与主键共享 required 状态。
 - `required`：key 必须出现且值不能为 null；`{}`、`[]` 和空字符串合法。
 - `min`、`max`：含边界数值限制。
 - `minlen`、`maxlen`：解码后字符串字节数或数组元素数限制。
@@ -114,7 +114,7 @@ typedef struct {
 ## 解码与所有权
 
 - 调用 decode 前，输出对象必须全零；重复使用前先 cleanup。
-- 未知字段跳过，重复已知字段报错，缺失的非 required 字段保持零值。
+- 未知字段跳过；重复已知字段采用最后一个值，覆盖前会先释放旧资源；缺失的非 required 字段保持零值。
 - required key 缺失与 required 值为 null 使用不同的结构化错误码。
 - 非 required 的 `char *`、动态数组和结构体指针接受 null，且不分配。
 - 动态数组使用延迟分配；`null` 和 `[]` 均保持 `NULL + 0`，只有第一个元素出现后才申请容量。

@@ -107,4 +107,10 @@ bool json_reflect_decode_value(
     const json_reflect_type *count_type
 );
 
+void json_reflect_release_field(
+    json_allocator *allocator,
+    const json_reflect_field *field,
+    void *record
+);
+
 #endif

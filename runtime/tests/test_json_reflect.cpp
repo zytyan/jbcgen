@@ -142,26 +142,33 @@ TEST(JsonReflectTest, ConstraintFailureRollsBackPreviouslyOwnedFields)
     EXPECT_EQ(value.name, nullptr);
 }
 
-TEST(JsonReflectTest, AliasSharesDuplicateAndRequiredState)
+TEST(JsonReflectTest, AliasAndDuplicateKeysUseLastValue)
 {
     FixtureDescriptors descriptors;
-    json_allocator allocator{system_malloc, system_free};
+    tracked_allocations.reset();
+    json_allocator allocator{tracking_json_allocator()};
     json_parser parser{};
     json_parser_init(
         &parser,
         &allocator,
         slice(
-            R"({"id":9007199254740993,"identifier":9007199254740994,"name":"x"})"
+            R"({"id":9007199254740993,"identifier":9007199254740994,"name":"first","name":"second"})"
         )
     );
     ReflectedValue value{};
 
-    EXPECT_FALSE(json_reflect_decode(&parser, &descriptors.root_type, &value));
-    EXPECT_EQ(parser.error.code, JSON_ERROR_OTHER_DUPLICATE_KEY);
-    EXPECT_EQ(value.id, 0U);
-    EXPECT_EQ(value.name, nullptr);
+    ASSERT_TRUE(json_reflect_decode(&parser, &descriptors.root_type, &value));
+    EXPECT_EQ(value.id, UINT64_C(9007199254740994));
+    ASSERT_NE(value.name, nullptr);
+    EXPECT_STREQ(value.name, "second");
+    EXPECT_EQ(tracked_allocations.allocation_count, 2U);
+    EXPECT_EQ(tracked_allocations.free_count, 1U);
+    json_reflect_release(&allocator, &descriptors.root_type, &value);
+    EXPECT_TRUE(tracked_allocations.clean());
 
     parser = {};
+    value = {};
+    tracked_allocations.reset();
     json_parser_init(
         &parser,
         &allocator,

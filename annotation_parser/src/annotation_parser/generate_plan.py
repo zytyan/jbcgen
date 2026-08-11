@@ -31,7 +31,7 @@ class FieldPlan:
     field_id: str
     path: tuple[str, ...]
     length_path: tuple[str, ...] | None
-    seen_index: int
+    field_index: int
 
 
 @dataclass(frozen=True)
@@ -117,7 +117,7 @@ class GeneratePlanBuilder:
         keys = tuple(
             sorted(
                 (
-                    KeyEntryPlan(key, field.seen_index)
+                    KeyEntryPlan(key, field.field_index)
                     for field in fields
                     for key in (
                         self.fields[field.field_id].key,
@@ -237,7 +237,7 @@ def format_generate_plan(plan: GeneratePlan, schema: Schema) -> str:
             lines.append("    array " + " ".join(parts))
         for field in item.fields:
             schema_field = fields[field.field_id]
-            flags = [f"seen={field.seen_index}"]
+            flags = [f"index={field.field_index}"]
             if schema_field.required:
                 flags.append("required")
             lines.append(

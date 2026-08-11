@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import sys
 import tempfile
@@ -53,6 +54,15 @@ def _atomic_write(path: Path, content: str) -> None:
         raise
 
 
+def _write_if_changed(path: Path, content: str) -> None:
+    try:
+        if path.read_text(encoding="utf-8") == content:
+            return
+    except (FileNotFoundError, UnicodeError):
+        pass
+    _atomic_write(path, content)
+
+
 def run(argv: Sequence[str] | None = None, stderr: TextIO | None = None) -> int:
     stderr = stderr or sys.stderr
     arguments = list(sys.argv[1:] if argv is None else argv)
@@ -68,12 +78,19 @@ def run(argv: Sequence[str] | None = None, stderr: TextIO | None = None) -> int:
         unit = ClangFrontend(options.clang).parse(options.input, clang_arguments)
         schema = build_schema(unit)
         plan = build_generate_plan(schema)
-        source = generate_c(schema, plan, options.include or str(options.input))
+        source_bytes = options.input.read_bytes()
+        source = generate_c(
+            schema,
+            plan,
+            options.include or str(options.input),
+            source_header=os.path.normpath(str(options.input)),
+            source_sha256=hashlib.sha256(source_bytes).hexdigest(),
+        )
         if options.dump_ir in {"schema", "all"}:
             print(format_schema(schema), file=stderr)
         if options.dump_ir in {"plan", "all"}:
             print(format_generate_plan(plan, schema), file=stderr)
-        _atomic_write(options.output, source)
+        _write_if_changed(options.output, source)
         return 0
     except (AnnotationError, FrontendError, OSError) as error:
         print(f"annotation-parser: error: {error}", file=stderr)

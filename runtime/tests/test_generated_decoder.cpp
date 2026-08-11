@@ -71,6 +71,11 @@ TEST_F(GeneratedDecoderTest, EveryAllocatorFailureRollsBackGeneratedTypes)
         decodeUser,
         releaseUser
     );
+    expect_every_allocation_to_fail_cleanly<User>(
+        R"({"id":1,"name":"first","name":"second","age":18,"bases":[{"id":1}],"bases":[{"id":2}],"metadata":{}})",
+        decodeUser,
+        releaseUser
+    );
     expect_every_allocation_to_fail_cleanly<StringSlots>(
         R"(["first","second","third"])",
         decodeStringSlots,
@@ -92,8 +97,6 @@ TEST_F(GeneratedDecoderTest, SemanticFailuresReleaseEarlierAllocations)
     const failure_case cases[] = {
         {R"({"id":1,"name":"owned","age":18,"metadata":{}})",
          JSON_ERROR_OTHER_MISSING_REQUIRED_KEY},
-        {R"({"id":1,"name":"owned","name":"again"})",
-         JSON_ERROR_OTHER_DUPLICATE_KEY},
         {R"({"id":1,"name":"owned" "age":18})",
          JSON_ERROR_SYNTAX_EXPECTED_COMMA},
         {R"({"id":1,"name":"owned","bases":[{"id":1}],"age":17})",
@@ -188,17 +191,26 @@ TEST_F(GeneratedDecoderTest, DynamicArrayDecodesAndReleasesElements)
     EXPECT_EQ(tracked_allocations.free_count, 1U);
 }
 
-TEST_F(GeneratedDecoderTest, DuplicateAliasAndRangeFailureRollback)
+TEST_F(GeneratedDecoderTest, DuplicateKeysUseLastValueWithoutLeaking)
 {
     User user{};
     json_parser parser{};
-    EXPECT_FALSE(decode(
-        R"({"id":1,"user-id":2,"age":18,"bases":[],"metadata":{}})",
+    ASSERT_TRUE(decode(
+        R"({"id":1,"user-id":2,"name":"first","name":"second","age":18,"bases":[],"metadata":{}})",
         &user, &parser));
-    EXPECT_EQ(parser.error.code, JSON_ERROR_OTHER_DUPLICATE_KEY);
+    EXPECT_EQ(user.id, 2U);
+    ASSERT_NE(user.name, nullptr);
+    EXPECT_STREQ(user.name, "second");
+    EXPECT_EQ(tracked_allocations.allocation_count, 2U);
+    EXPECT_EQ(tracked_allocations.free_count, 1U);
+    releaseUser(&allocator, &user);
+    EXPECT_TRUE(tracked_allocations.clean());
+}
 
-    parser = {};
-    user = {};
+TEST_F(GeneratedDecoderTest, RangeFailureRollsBack)
+{
+    User user{};
+    json_parser parser{};
     tracked_allocations.reset();
     EXPECT_FALSE(decode(
         R"({"id":1,"bases":[{"id":7}],"age":17,"metadata":{}})",

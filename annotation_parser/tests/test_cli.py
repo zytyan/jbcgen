@@ -1,9 +1,11 @@
+import hashlib
 import io
 import shutil
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from annotation_parser.cli import run
 
@@ -52,7 +54,30 @@ class CliTest(unittest.TestCase):
             self.assertEqual(result, 0, diagnostics.getvalue())
             self.assertIn("Schema\n", diagnostics.getvalue())
             self.assertIn("GeneratePlan", diagnostics.getvalue())
-            self.assertIn("bool decodeValue", output.read_text(encoding="utf-8"))
+            generated = output.read_text(encoding="utf-8")
+            self.assertIn("bool decodeValue", generated)
+            self.assertIn(f" * Source: {header}", generated)
+            self.assertIn(
+                f" * Source SHA-256: {hashlib.sha256(header.read_bytes()).hexdigest()}",
+                generated,
+            )
+
+            with patch("annotation_parser.cli._atomic_write") as atomic_write:
+                result = run(
+                    [
+                        str(header),
+                        "-o",
+                        str(output),
+                        "--include",
+                        "value.h",
+                        "--",
+                        "-I",
+                        str(RUNTIME),
+                    ],
+                    diagnostics,
+                )
+                self.assertEqual(result, 0, diagnostics.getvalue())
+                atomic_write.assert_not_called()
 
 
 if __name__ == "__main__":
