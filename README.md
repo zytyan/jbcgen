@@ -72,6 +72,8 @@ Clang Frontend AstType
 
 生成器使用 5 个固定模板，输出类型、字段、key、资源存储和 array-layout 的 `static const` 描述表，以及很薄的公开 decode/cleanup 包装函数。key entry 只保存 key 和字段 ID；map 按 UTF-8 字节的 `(len, memcmp)` 排序并二分查找。通用控制流、错误处理和资源回滚位于 `runtime/json_reflect.c`，生成结果不再包含大段重复流程代码或字段 callback。
 
+基础 `bool`、整数和浮点反射描述符由 runtime 提供，生成代码只保留 enum、复合类型及布局相关描述符。
+
 Python 前端和注解说明见 [annotation_parser/README.md](annotation_parser/README.md)。
 
 ## C部分

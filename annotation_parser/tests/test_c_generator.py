@@ -200,7 +200,7 @@ class CGeneratorTest(unittest.TestCase):
             self.assertNotIn("sizeof(struct StringVec)", source)
             self.assertIn(".shape = JSON_REFLECT_ARRAY", source)
             self.assertIn(".element_type = &jbc_type_string_pointer", source)
-            self.assertIn(".capacity_type = &jbc_type_integer_u8", source)
+            self.assertIn(".capacity_type = &json_reflect_type_u8", source)
 
 
 if __name__ == "__main__":

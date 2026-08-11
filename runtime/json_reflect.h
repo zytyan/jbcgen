@@ -66,6 +66,18 @@ typedef struct json_reflect_type {
     const struct json_reflect_record *record;
 } json_reflect_type;
 
+extern const json_reflect_type json_reflect_type_bool;
+extern const json_reflect_type json_reflect_type_i8;
+extern const json_reflect_type json_reflect_type_i16;
+extern const json_reflect_type json_reflect_type_i32;
+extern const json_reflect_type json_reflect_type_i64;
+extern const json_reflect_type json_reflect_type_u8;
+extern const json_reflect_type json_reflect_type_u16;
+extern const json_reflect_type json_reflect_type_u32;
+extern const json_reflect_type json_reflect_type_u64;
+extern const json_reflect_type json_reflect_type_f32;
+extern const json_reflect_type json_reflect_type_f64;
+
 typedef struct json_reflect_field {
     json_slice primary_key;
     size_t offset;

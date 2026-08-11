@@ -35,6 +35,8 @@ validator 在构建前检查注解命令和参数词汇表；`SchemaBuilder` 负
 
 C generator 使用 5 个固定完整模板，生成 `static const` 类型、record、field、key、storage 和 array-layout 描述表，以及公开 decode/cleanup 的薄包装函数。key entry 只包含 key 和 field ID，按 UTF-8 `(len, memcmp)` 排序后由 runtime 二分查找。通用对象/数组控制流、required、约束、失败回滚与 cleanup 都位于 `json_reflect.c`；生成代码不包含逐字段 callback。
 
+`bool`、各宽度有/无符号整数、`float` 和 `double` 的反射描述符由 runtime 统一提供，生成文件直接引用；enum 及所有携带具体布局的类型仍生成局部描述符。
+
 描述符中的偏移和大小使用 C 的 `offsetof` 与 `sizeof`，不固化 Clang 计算出的数字。整数、enum、浮点和指针值通过固定宽度临时值及 `memcpy` 访问，沿用 64 位 LP64 假设。JSON binding 字段表与物理 storage 表分离，因此 flatten 和 alias 不会造成重复释放。描述符是生成代码与 runtime 之间的内部接口，不承诺第三方 ABI 稳定性。
 
 ## CLI

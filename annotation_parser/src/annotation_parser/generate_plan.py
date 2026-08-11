@@ -5,6 +5,20 @@ from dataclasses import dataclass
 
 from .schema import RecordShape, Schema, TypeKind
 
+_RUNTIME_TYPE_DESCRIPTORS = {
+    "bool": "json_reflect_type_bool",
+    "integer:i8": "json_reflect_type_i8",
+    "integer:i16": "json_reflect_type_i16",
+    "integer:i32": "json_reflect_type_i32",
+    "integer:i64": "json_reflect_type_i64",
+    "integer:u8": "json_reflect_type_u8",
+    "integer:u16": "json_reflect_type_u16",
+    "integer:u32": "json_reflect_type_u32",
+    "integer:u64": "json_reflect_type_u64",
+    "float:32": "json_reflect_type_f32",
+    "float:64": "json_reflect_type_f64",
+}
+
 
 def _identifier(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", value)
@@ -18,6 +32,7 @@ def _descriptor_name(prefix: str, value: str) -> str:
 class TypeDescriptorPlan:
     type_id: str
     symbol: str
+    runtime: bool
 
 
 @dataclass(frozen=True)
@@ -69,7 +84,13 @@ class GeneratePlanBuilder:
     def build(self) -> GeneratePlan:
         used = self._used_type_ids()
         descriptors = tuple(
-            TypeDescriptorPlan(item.id, _descriptor_name("type", item.id))
+            TypeDescriptorPlan(
+                item.id,
+                _RUNTIME_TYPE_DESCRIPTORS.get(
+                    item.id, _descriptor_name("type", item.id)
+                ),
+                item.id in _RUNTIME_TYPE_DESCRIPTORS,
+            )
             for item in self.schema.types
             if item.id in used
         )
@@ -214,7 +235,8 @@ def format_generate_plan(plan: GeneratePlan, schema: Schema) -> str:
     records = schema.record_map()
     lines = ["GeneratePlan", "  descriptors"]
     for descriptor in plan.descriptors:
-        lines.append(f"    {descriptor.type_id} -> {descriptor.symbol}")
+        suffix = " [runtime]" if descriptor.runtime else ""
+        lines.append(f"    {descriptor.type_id} -> {descriptor.symbol}{suffix}")
     for item in plan.types:
         lines.append(
             f"  type {item.record_id} shape={item.shape.value} "

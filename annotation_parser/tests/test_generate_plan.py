@@ -66,6 +66,10 @@ class GeneratePlanTest(unittest.TestCase):
         self.assertEqual([field.field_index for field in root.fields], [0, 1, 2])
         self.assertEqual(root.type_descriptor, "jbc_type_Root")
         self.assertEqual(root.record_descriptor, "jbc_record_Root")
+        descriptors = {item.type_id: item for item in plan.descriptors}
+        self.assertEqual(descriptors["integer:i32"].symbol, "json_reflect_type_i32")
+        self.assertTrue(descriptors["integer:i32"].runtime)
+        self.assertFalse(descriptors["record:Root"].runtime)
         self.assertEqual(
             [(item.key, item.field_index) for item in root.key_entries],
             [("id", 0), ("items", 2), ("label", 1), ("identifier", 0)],
