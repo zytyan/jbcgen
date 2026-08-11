@@ -33,6 +33,7 @@ add_library(zjson_pull_api
     json_error.c
     json_key_dispatch.c
     json_pull.c
+    json_reflect.c
     json_str_slice.c
     json_tokenizer.c
     json_writer.c
