@@ -3,8 +3,8 @@ GeneratePlan
     dynamic-array:record:Child -> jbc_type_dynamic_array_record_Child
     enum:Kind -> jbc_type_enum_Kind
     fixed-array:3:integer:i32 -> jbc_type_fixed_array_3_integer_i32
-    integer:i32 -> json_reflect_type_i32 [runtime]
-    integer:u64 -> json_reflect_type_u64 [runtime]
+    integer:i32 -> jbc_type_integer_i32
+    integer:u64 -> jbc_type_integer_u64
     pointer:record:Child -> jbc_type_pointer_record_Child
     record:Child -> jbc_type_Child
     record:Root -> jbc_type_Root

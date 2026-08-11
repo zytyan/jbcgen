@@ -40,19 +40,14 @@ class CGenerator:
         self.records = schema.record_map()
         self.fields = schema.field_map()
         self.type_plans = plan.type_map()
-        self.descriptor_plans = plan.descriptors
         self.descriptors = plan.descriptor_map()
-        self.runtime_descriptors = {
-            item.type_id for item in plan.descriptors if item.runtime
-        }
 
     def generate(self, include: str, source_header: str, source_sha256: str) -> str:
         forward = templates.render_c_template(
             templates.FORWARD_DECLARATIONS,
             type_declarations="\n".join(
-                f"static const json_reflect_type {item.symbol};"
-                for item in self.descriptor_plans
-                if not item.runtime
+                f"static const json_reflect_type {symbol};"
+                for symbol in self.descriptors.values()
             ),
             record_declarations="\n".join(
                 f"static const json_reflect_record {item.record_descriptor};"
@@ -65,9 +60,7 @@ class CGenerator:
         non_record_types = "\n\n".join(
             self._type_definition(item)
             for item in self.schema.types
-            if item.kind is not TypeKind.RECORD
-            and item.id in self.descriptors
-            and item.id not in self.runtime_descriptors
+            if item.kind is not TypeKind.RECORD and item.id in self.descriptors
         )
         descriptors = "\n\n".join(
             part for part in (non_record_types, record_blocks) if part

@@ -21,44 +21,6 @@ struct ReflectedStringArray {
     uint8_t length;
 };
 
-TEST(JsonReflectTest, RuntimeProvidesBasicTypeDescriptors)
-{
-    struct expected_type {
-        const json_reflect_type *type;
-        json_reflect_kind kind;
-        uint8_t bits;
-        uint8_t flags;
-        size_t size;
-    };
-    const expected_type types[] = {
-        {&json_reflect_type_bool, JSON_REFLECT_BOOL, 8, 0, sizeof(bool)},
-        {&json_reflect_type_i8, JSON_REFLECT_INTEGER, 8,
-         JSON_REFLECT_SIGNED, sizeof(int8_t)},
-        {&json_reflect_type_i16, JSON_REFLECT_INTEGER, 16,
-         JSON_REFLECT_SIGNED, sizeof(int16_t)},
-        {&json_reflect_type_i32, JSON_REFLECT_INTEGER, 32,
-         JSON_REFLECT_SIGNED, sizeof(int32_t)},
-        {&json_reflect_type_i64, JSON_REFLECT_INTEGER, 64,
-         JSON_REFLECT_SIGNED, sizeof(int64_t)},
-        {&json_reflect_type_u8, JSON_REFLECT_INTEGER, 8, 0, sizeof(uint8_t)},
-        {&json_reflect_type_u16, JSON_REFLECT_INTEGER, 16, 0, sizeof(uint16_t)},
-        {&json_reflect_type_u32, JSON_REFLECT_INTEGER, 32, 0, sizeof(uint32_t)},
-        {&json_reflect_type_u64, JSON_REFLECT_INTEGER, 64, 0, sizeof(uint64_t)},
-        {&json_reflect_type_f32, JSON_REFLECT_FLOAT, 32, 0, sizeof(float)},
-        {&json_reflect_type_f64, JSON_REFLECT_FLOAT, 64, 0, sizeof(double)},
-    };
-
-    for (const expected_type &item : types) {
-        EXPECT_EQ(item.type->kind, item.kind);
-        EXPECT_EQ(item.type->bits, item.bits);
-        EXPECT_EQ(item.type->flags, item.flags);
-        EXPECT_EQ(item.type->size, item.size);
-        EXPECT_EQ(item.type->capacity, 0U);
-        EXPECT_EQ(item.type->target, nullptr);
-        EXPECT_EQ(item.type->record, nullptr);
-    }
-}
-
 void *system_malloc(size_t size)
 {
     return std::malloc(size);
