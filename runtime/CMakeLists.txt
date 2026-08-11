@@ -1,30 +1,31 @@
 cmake_minimum_required(VERSION 3.14)
-project(json_reflect_api LANGUAGES C CXX)
+project(json_reflect_api LANGUAGES C)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+option(JSON_REFLECT_BUILD_TESTS "Build json_reflect_api tests" OFF)
+option(
+    JSON_REFLECT_ENABLE_SANITIZERS
+    "Enable AddressSanitizer and UndefinedBehaviorSanitizer for json_reflect_api"
+    OFF
+)
+option(
+    JSON_REFLECT_ENABLE_LSAN_CHECKS
+    "Enable LeakSanitizer checks for json_reflect_api sanitizer tests"
+    OFF
+)
 
+if(JSON_REFLECT_ENABLE_LSAN_CHECKS AND NOT JSON_REFLECT_ENABLE_SANITIZERS)
+    message(FATAL_ERROR
+        "JSON_REFLECT_ENABLE_LSAN_CHECKS requires JSON_REFLECT_ENABLE_SANITIZERS"
+    )
+endif()
 
-option(ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
-option(ENABLE_LSAN_CHECKS "Enable LeakSanitizer checks for sanitizer tests" OFF)
-
-if(ENABLE_SANITIZERS)
-    if(NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR
-       NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        message(FATAL_ERROR "ENABLE_SANITIZERS requires GCC or Clang")
-    endif()
-    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
-    add_link_options(-fsanitize=address,undefined)
-    if(ENABLE_LSAN_CHECKS)
-        set(ENV{LSAN_OPTIONS} "detect_leaks=1")
-        set(ENV{ASAN_OPTIONS} "detect_leaks=1")
-    else()
-        set(ENV{LSAN_OPTIONS} "detect_leaks=0")
-        set(ENV{ASAN_OPTIONS} "detect_leaks=0")
+if(JSON_REFLECT_ENABLE_SANITIZERS)
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        message(FATAL_ERROR "JSON_REFLECT_ENABLE_SANITIZERS requires GCC or Clang")
     endif()
 endif()
 
@@ -44,13 +45,27 @@ add_library(json_reflect_api
     json_tokenizer.c
 )
 target_include_directories(json_reflect_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+if(JSON_REFLECT_ENABLE_SANITIZERS)
+    target_compile_options(json_reflect_api PRIVATE
+        -fsanitize=address,undefined
+        -fno-omit-frame-pointer
+        -g
+    )
+    target_link_options(json_reflect_api PUBLIC -fsanitize=address,undefined)
+endif()
 set_target_properties(json_reflect_api PROPERTIES
     VERSION 1.0.0
     SOVERSION 1
 )
 
-include(CTest)
-if(BUILD_TESTING)
+if(JSON_REFLECT_BUILD_TESTS)
+    enable_language(CXX)
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    if(JSON_REFLECT_ENABLE_SANITIZERS AND
+       NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        message(FATAL_ERROR "JSON_REFLECT_ENABLE_SANITIZERS requires GCC or Clang")
+    endif()
     find_package(GTest REQUIRED)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
 

@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.14)
 
+if(JSON_REFLECT_ENABLE_SANITIZERS)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
+endif()
+
 # Test source files
 set(JSON_REFLECT_TEST_SOURCES
         test_json_tokenizer.cpp
@@ -34,7 +38,7 @@ target_include_directories(json_reflect_tests PRIVATE
 )
 
 include(GoogleTest)
-if(NOT ENABLE_SANITIZERS)
+if(NOT JSON_REFLECT_ENABLE_SANITIZERS)
     gtest_discover_tests(json_reflect_tests)
 endif()
 
@@ -89,7 +93,7 @@ if(UNIX AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     add_test(NAME json_allocator_contract_test COMMAND json_allocator_contract_test)
 endif()
 
-if(ENABLE_SANITIZERS)
+if(JSON_REFLECT_ENABLE_SANITIZERS)
     set(SANITIZER_TESTS json_reflect_tests json_reflect_basic_types_test)
     if(TARGET json_reflect_abi_mismatch_test)
         list(APPEND SANITIZER_TESTS json_reflect_abi_mismatch_test)
@@ -98,7 +102,7 @@ if(ENABLE_SANITIZERS)
         list(APPEND SANITIZER_TESTS json_allocator_contract_test)
     endif()
 
-    if(ENABLE_LSAN_CHECKS)
+    if(JSON_REFLECT_ENABLE_LSAN_CHECKS)
         set_tests_properties(${SANITIZER_TESTS} PROPERTIES
             ENVIRONMENT "ASAN_OPTIONS=detect_leaks=1;LSAN_OPTIONS=detect_leaks=1"
         )

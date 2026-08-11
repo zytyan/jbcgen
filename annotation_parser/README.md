@@ -146,7 +146,7 @@ uvx ruff==0.16.2 check src tests
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 
 cd ../runtime
-cmake -S . -B build -DBUILD_TESTING=ON
+cmake -S . -B build -DJSON_REFLECT_BUILD_TESTS=ON
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```

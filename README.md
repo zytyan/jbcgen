@@ -248,6 +248,17 @@ typedef struct ItemVec {
 
 ## 集成已有 CMake 项目
 
+可以只把 `runtime` 目录复制到已有项目。默认配置只构建 C11 库，不启用测试、
+sanitizer，也不要求宿主提供 C++、GoogleTest 或 Python：
+
+```cmake
+add_subdirectory(third_party/json_reflect_runtime)
+target_link_libraries(your_target PRIVATE json_reflect_api)
+```
+
+链接 `json_reflect_api` 会通过 `PUBLIC` include directory 自动提供 runtime 头文件。
+生成器可以单独安装，也可以保留完整 jbcgen 仓库并按下面的例子从源码调用。
+
 以下示例假设仓库布局为：
 
 ```text
@@ -275,15 +286,11 @@ set(JSON_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/include/my_project/user.h")
 set(JSON_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(JSON_GENERATED_C "${JSON_GENERATED_DIR}/user_json.c")
 
-set(JBCGEN_PARENT_BUILD_TESTING "${BUILD_TESTING}")
-set(BUILD_TESTING OFF)
 add_subdirectory(
     "${JBCGEN_ROOT}/runtime"
     "${CMAKE_CURRENT_BINARY_DIR}/jbcgen-runtime"
     EXCLUDE_FROM_ALL
 )
-set(BUILD_TESTING "${JBCGEN_PARENT_BUILD_TESTING}")
-unset(JBCGEN_PARENT_BUILD_TESTING)
 
 file(GLOB_RECURSE JBCGEN_PYTHON_SOURCES CONFIGURE_DEPENDS
     "${JBCGEN_ROOT}/annotation_parser/src/annotation_parser/*.py"
@@ -330,7 +337,7 @@ cmake --build build
 说明：
 
 - `CMAKE_EXPORT_COMPILE_COMMANDS` 让 generator 复用目标的宏、include、target 和语言选项。该功能通常配合 Ninja 或 Makefile generator 使用。
-- 临时设置 `BUILD_TESTING=OFF` 只是不配置 jbcgen 自身的 GoogleTest 回归；随后立即恢复父项目原值，不影响业务项目测试。
+- `JSON_REFLECT_BUILD_TESTS` 默认关闭，因此 `add_subdirectory` 不会查找 GoogleTest、Python，也不会向宿主项目注册 runtime 测试；宿主项目自己的 `BUILD_TESTING` 不受影响。
 - `DEPENDS` 同时列出输入头文件和 generator Python 源码，因此修改注解或 generator 后会重新执行。
 - generator 自身会比较完整生成内容；内容相同时不会更新时间戳，避免无意义的下游重编译。
 - `my_project_json` 通过 `PUBLIC` 链接 `json_reflect_api`，最终可执行文件只需链接 `my_project_json`。
@@ -369,9 +376,32 @@ ruff check .
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 
 cd ../runtime
-cmake -S . -B build -DBUILD_TESTING=ON
+cmake -S . -B build -DJSON_REFLECT_BUILD_TESTS=ON
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+Runtime 使用独立且默认关闭的开发选项，不读取宿主项目的同名通用选项：
+
+```text
+JSON_REFLECT_BUILD_TESTS=OFF
+JSON_REFLECT_ENABLE_SANITIZERS=OFF
+JSON_REFLECT_ENABLE_LSAN_CHECKS=OFF
+```
+
+启用 ASan/UBSan 测试但关闭 LSan：
+
+```sh
+cmake -S runtime -B build-asan \
+  -DJSON_REFLECT_BUILD_TESTS=ON \
+  -DJSON_REFLECT_ENABLE_SANITIZERS=ON \
+  -DJSON_REFLECT_ENABLE_LSAN_CHECKS=OFF
+cmake --build build-asan
+ctest --test-dir build-asan --output-on-failure
+```
+
+`JSON_REFLECT_ENABLE_LSAN_CHECKS=ON` 必须与 sanitizer 开关同时使用。三个选项都带
+`JSON_REFLECT_` 前缀，不会因宿主项目设置 `BUILD_TESTING`、`ENABLE_SANITIZERS`
+或类似通用变量而意外启用。
 
 完整注解和 frontend 实现说明见 [annotation_parser/README.md](annotation_parser/README.md)。
