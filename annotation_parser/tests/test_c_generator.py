@@ -7,11 +7,12 @@ from pathlib import Path
 
 from annotation_parser.c_generator import generate_c
 from annotation_parser.clang_frontend import ClangFrontend
-from annotation_parser.generate_plan import build_generate_plan
+from annotation_parser.generate_plan import build_generate_plan, format_generate_plan
 from annotation_parser.schema import build_schema
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "runtime"
+GOLDEN = Path(__file__).with_name("golden")
 
 
 HEADER = """
@@ -46,6 +47,22 @@ void releaseRoot(json_allocator *allocator, Root *root);
 
 @unittest.skipUnless(shutil.which("clang"), "clang is required")
 class CGeneratorTest(unittest.TestCase):
+    def test_reflection_source_and_plan_match_golden_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            header = Path(directory) / "model.h"
+            header.write_text(textwrap.dedent(HEADER), encoding="utf-8")
+            schema = build_schema(ClangFrontend().parse(header, ["-I", str(RUNTIME)]))
+            plan = build_generate_plan(schema)
+
+            self.assertEqual(
+                generate_c(schema, plan, "model.h"),
+                (GOLDEN / "reflection_model.c").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                format_generate_plan(plan, schema) + "\n",
+                (GOLDEN / "reflection_plan.txt").read_text(encoding="utf-8"),
+            )
+
     def test_generated_source_compiles_as_c11(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
