@@ -77,7 +77,7 @@ class CGeneratorTest(unittest.TestCase):
             self.assertEqual(process.returncode, 0, process.stderr + "\n" + source)
             self.assertIn("static const json_reflect_record jbc_record_Root", source)
             self.assertIn("static const json_reflect_type jbc_type_Root", source)
-            self.assertIn('{{"identifier", 10}, 0}', source)
+            self.assertIn('{{"identifier", sizeof("identifier") - 1}, 0}', source)
             self.assertIn(".offset = offsetof(struct Root, id)", source)
             self.assertIn("json_reflect_decode(parser, &jbc_type_Root, out)", source)
             self.assertIn(
@@ -85,19 +85,20 @@ class CGeneratorTest(unittest.TestCase):
             )
             self.assertNotIn("jbc_decode_Root_field_id", source)
             self.assertLess(
-                source.index('{{"id", 2}, 0}'), source.index('{{"kind", 4}, 5}')
+                source.index('{{"id", sizeof("id") - 1}, 0}'),
+                source.index('{{"kind", sizeof("kind") - 1}, 5}'),
             )
             self.assertLess(
-                source.index('{{"kind", 4}, 5}'),
-                source.index('{{"name", 4}, 1}'),
+                source.index('{{"kind", sizeof("kind") - 1}, 5}'),
+                source.index('{{"name", sizeof("name") - 1}, 1}'),
             )
             self.assertLess(
-                source.index('{{"name", 4}, 1}'),
-                source.index('{{"children", 8}, 2}'),
+                source.index('{{"name", sizeof("name") - 1}, 1}'),
+                source.index('{{"children", sizeof("children") - 1}, 2}'),
             )
             self.assertLess(
-                source.index('{{"children", 8}, 2}'),
-                source.index('{{"identifier", 10}, 0}'),
+                source.index('{{"children", sizeof("children") - 1}, 2}'),
+                source.index('{{"identifier", sizeof("identifier") - 1}, 0}'),
             )
             self.assertIn(".flags = JSON_REFLECT_REQUIRED", source)
 

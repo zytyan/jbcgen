@@ -13,6 +13,11 @@ def _c_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=True)
 
 
+def _c_slice(value: str) -> str:
+    literal = _c_string(value)
+    return f"{{{literal}, sizeof({literal}) - 1}}"
+
+
 def _array_size(name: str) -> str:
     return f"sizeof({name}) / sizeof({name}[0])"
 
@@ -225,8 +230,7 @@ class CGenerator:
         name = f"{plan.record_descriptor}_keys"
         lines = [f"static const json_key_entry {name}[] = {{"]
         lines.extend(
-            f"    {{{{{_c_string(item.key)}, {len(item.key.encode('utf-8'))}}}, "
-            f"{item.field_index}}},"
+            f"    {{{_c_slice(item.key)}, {item.field_index}}},"
             for item in plan.key_entries
         )
         lines.append("};")
@@ -254,10 +258,7 @@ class CGenerator:
             lines.extend(
                 (
                     "    {",
-                    (
-                        f"        .primary_key = {{{_c_string(schema_field.key)}, "
-                        f"{len(schema_field.key.encode('utf-8'))}}},"
-                    ),
+                    f"        .primary_key = {_c_slice(schema_field.key)},",
                     f"        .offset = {self._offset(record, field.path)},",
                     f"        .type = &{self.descriptors[schema_field.type_id]},",
                     f"        .constraints = {'&' + constraints if constraints else 'NULL'},",
