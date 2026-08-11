@@ -34,6 +34,11 @@ add_library(zjson_pull_api
     json_key_dispatch.c
     json_pull.c
     json_reflect.c
+    json_reflect_array.c
+    json_reflect_object.c
+    json_reflect_release.c
+    json_reflect_scalar.c
+    json_reflect_support.c
     json_str_slice.c
     json_tokenizer.c
     json_writer.c
