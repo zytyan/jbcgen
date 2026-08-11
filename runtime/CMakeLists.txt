@@ -35,6 +35,7 @@ add_library(json_reflect_api
     json_pull.c
     json_reflect.c
     json_reflect_array.c
+    json_reflect_basic_types.c
     json_reflect_object.c
     json_reflect_release.c
     json_reflect_scalar.c

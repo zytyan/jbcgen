@@ -1,5 +1,7 @@
 #include "json_pull.h"
 #include "gtest/gtest.h"
+#include <cfloat>
+#include <climits>
 #include <limits>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,10 +19,7 @@ class JsonPullTest : public ::testing::Test {
         allocator.free = free;
     }
 
-    static json_slice make_slice(const char *str)
-    {
-        return {str, strlen(str)};
-    }
+    static json_slice make_slice(const char *str) { return {str, strlen(str)}; }
 
     static std::string format_error(const json_parser &parser)
     {
@@ -44,14 +43,16 @@ class JsonPullTest : public ::testing::Test {
     }
 
     template <typename T>
-    void expect_integer_range_failure(const char *input, bool (*decode)(json_parser *, T *), T initial)
+    void expect_integer_range_failure(const char *input, bool (*decode)(json_parser *, T *),
+                                      T initial)
     {
         json_parser parser{};
         json_parser_init(&parser, &allocator, make_slice(input));
         T value = initial;
         EXPECT_FALSE(decode(&parser, &value)) << input;
         EXPECT_EQ(value, initial) << input;
-        EXPECT_EQ(parser.error.code, JSON_ERROR_RANGE_NUMBER) << input << ": " << format_error(parser);
+        EXPECT_EQ(parser.error.code, JSON_ERROR_RANGE_NUMBER)
+            << input << ": " << format_error(parser);
     }
 };
 
@@ -148,13 +149,13 @@ TEST_F(JsonPullTest, ConsumeColon)
     EXPECT_TRUE(result);
 }
 
-TEST_F(JsonPullTest, ParseInt64)
+TEST_F(JsonPullTest, ParseLong)
 {
     struct {
         const char *input;
-        int64_t expected;
-    } cases[]{{"9223372036854775807", INT64_MAX},
-              {"-9223372036854775808", INT64_MIN},
+        long expected;
+    } cases[]{{"9223372036854775807", LONG_MAX},
+              {"-9223372036854775808", LONG_MIN},
               {"0", 0LL},
               {"0000", 0LL},
               {"001", 1LL},
@@ -166,49 +167,44 @@ TEST_F(JsonPullTest, ParseInt64)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         json_parser parser = {0};
         json_parser_init(&parser, &allocator, make_slice(cases[i].input));
-        int64_t real = 0;
-        bool result = json_decode_i64(&parser, &real);
-        EXPECT_TRUE(result) << "Input: " << cases[i].input << "\n"
-                            << format_error(parser);
+        long real = 0;
+        bool result = json_decode_long(&parser, &real);
+        EXPECT_TRUE(result) << "Input: " << cases[i].input << "\n" << format_error(parser);
         EXPECT_EQ(real, cases[i].expected) << "Input: " << cases[i].input << "\n"
                                            << format_error(parser);
         EXPECT_EQ(json_peek_token(&parser)->kind, JSON_TOKEN_EOF);
     }
 }
 
-TEST_F(JsonPullTest, ParseAllIntegerWidths)
+TEST_F(JsonPullTest, ParseAllBasicIntegerTypes)
 {
-    expect_integer_success<int8_t>("-128", json_decode_i8, INT8_MIN);
-    expect_integer_success<int8_t>("127", json_decode_i8, INT8_MAX);
-    expect_integer_success<int16_t>("-32768", json_decode_i16, INT16_MIN);
-    expect_integer_success<int16_t>("32767", json_decode_i16, INT16_MAX);
-    expect_integer_success<int32_t>("-2147483648", json_decode_i32, INT32_MIN);
-    expect_integer_success<int32_t>("2147483647", json_decode_i32, INT32_MAX);
-
-    expect_integer_success<uint8_t>(R"json("0xff")json", json_decode_u8, UINT8_MAX);
-    expect_integer_success<uint16_t>("65535", json_decode_u16, UINT16_MAX);
-    expect_integer_success<uint32_t>("4294967295", json_decode_u32, UINT32_MAX);
-    expect_integer_success<uint64_t>("0", json_decode_u64, UINT64_C(0));
-    expect_integer_success<uint64_t>("9223372036854775808", json_decode_u64,
-                                     UINT64_C(9223372036854775808));
-    expect_integer_success<uint64_t>("18446744073709551615", json_decode_u64, UINT64_MAX);
-    expect_integer_success<uint64_t>(R"json("0xffffffffffffffff")json", json_decode_u64, UINT64_MAX);
+    expect_integer_success<char>("0", json_decode_char, char{0});
+    expect_integer_success<signed char>("-128", json_decode_signed_char, SCHAR_MIN);
+    expect_integer_success<unsigned char>(R"json("0xff")json", json_decode_unsigned_char,
+                                          UCHAR_MAX);
+    expect_integer_success<short>("-32768", json_decode_short, SHRT_MIN);
+    expect_integer_success<unsigned short>("65535", json_decode_unsigned_short, USHRT_MAX);
+    expect_integer_success<int>("-2147483648", json_decode_int, INT_MIN);
+    expect_integer_success<unsigned int>("4294967295", json_decode_unsigned_int, UINT_MAX);
+    expect_integer_success<long>("9223372036854775807", json_decode_long, LONG_MAX);
+    expect_integer_success<unsigned long>("18446744073709551615", json_decode_unsigned_long,
+                                          ULONG_MAX);
+    expect_integer_success<long long>("-9223372036854775808", json_decode_long_long, LLONG_MIN);
+    expect_integer_success<unsigned long long>(R"json("0xffffffffffffffff")json",
+                                               json_decode_unsigned_long_long, ULLONG_MAX);
 }
 
-TEST_F(JsonPullTest, RejectsOutOfRangeIntegerWidths)
+TEST_F(JsonPullTest, RejectsOutOfRangeBasicIntegerTypes)
 {
-    expect_integer_range_failure<int8_t>("-129", json_decode_i8, INT8_C(11));
-    expect_integer_range_failure<int8_t>("128", json_decode_i8, INT8_C(11));
-    expect_integer_range_failure<int16_t>("-32769", json_decode_i16, INT16_C(11));
-    expect_integer_range_failure<int16_t>("32768", json_decode_i16, INT16_C(11));
-    expect_integer_range_failure<int32_t>("-2147483649", json_decode_i32, INT32_C(11));
-    expect_integer_range_failure<int32_t>("2147483648", json_decode_i32, INT32_C(11));
-    expect_integer_range_failure<uint8_t>("-1", json_decode_u8, UINT8_C(11));
-    expect_integer_range_failure<uint8_t>("256", json_decode_u8, UINT8_C(11));
-    expect_integer_range_failure<uint16_t>("65536", json_decode_u16, UINT16_C(11));
-    expect_integer_range_failure<uint32_t>("4294967296", json_decode_u32, UINT32_C(11));
-    expect_integer_range_failure<uint64_t>("-1", json_decode_u64, UINT64_C(11));
-    expect_integer_range_failure<uint64_t>("18446744073709551616", json_decode_u64, UINT64_C(11));
+    expect_integer_range_failure<signed char>("-129", json_decode_signed_char, 11);
+    expect_integer_range_failure<unsigned char>("256", json_decode_unsigned_char, 11);
+    expect_integer_range_failure<short>("-32769", json_decode_short, 11);
+    expect_integer_range_failure<unsigned short>("65536", json_decode_unsigned_short, 11);
+    expect_integer_range_failure<int>("2147483648", json_decode_int, 11);
+    expect_integer_range_failure<unsigned int>("4294967296", json_decode_unsigned_int, 11);
+    expect_integer_range_failure<unsigned long>("-1", json_decode_unsigned_long, 11);
+    expect_integer_range_failure<unsigned long long>("18446744073709551616",
+                                                     json_decode_unsigned_long_long, 11);
 }
 
 TEST_F(JsonPullTest, ParseFloat64)
@@ -232,15 +228,29 @@ TEST_F(JsonPullTest, ParseFloat64)
         json_parser parser = {0};
         json_parser_init(&parser, &allocator, make_slice(cases[i].input));
         double real = 0;
-        bool result = json_decode_f64(&parser, &real);
+        bool result = json_decode_double(&parser, &real);
         ASSERT_TRUE(parser.valid) << format_error(parser);
         ;
-        EXPECT_TRUE(result) << "Input: " << cases[i].input << "\n"
-                            << format_error(parser);
+        EXPECT_TRUE(result) << "Input: " << cases[i].input << "\n" << format_error(parser);
         EXPECT_EQ(real, cases[i].expected) << "Input: " << cases[i].input << "\n"
                                            << format_error(parser);
         EXPECT_EQ(json_peek_token(&parser)->kind, JSON_TOKEN_EOF);
     }
+}
+
+TEST_F(JsonPullTest, ParseFloatAndRejectNarrowingOverflow)
+{
+    json_parser parser{};
+    json_parser_init(&parser, &allocator, make_slice("1.5"));
+    float value = 0.0F;
+    ASSERT_TRUE(json_decode_float(&parser, &value));
+    EXPECT_FLOAT_EQ(value, 1.5F);
+
+    json_parser_init(&parser, &allocator, make_slice("3.5e38"));
+    value = 7.0F;
+    EXPECT_FALSE(json_decode_float(&parser, &value));
+    EXPECT_FLOAT_EQ(value, 7.0F);
+    EXPECT_EQ(parser.error.code, JSON_ERROR_RANGE_NUMBER);
 }
 
 TEST_F(JsonPullTest, ParseIntArray)
@@ -259,7 +269,7 @@ TEST_F(JsonPullTest, ParseIntArray)
     size_t i = 0;
     while (true) {
         int64_t real = 0xdeadbeef; // 随机值，只要不是 data[i] 就行
-        bool result = json_decode_i64(&parser, &real);
+        bool result = json_decode_long(&parser, &real);
         ASSERT_LE(i, data_len); // 一旦 i 越界，立刻终止测试避免段错误
         ASSERT_TRUE(parser.valid) << "i = " << i << ", " << format_error(parser);
         EXPECT_TRUE(result);
@@ -307,24 +317,36 @@ TEST_F(JsonPullTest, FormatsAllErrorKinds)
         const char *expected;
     };
     ErrorCase cases[] = {
-        {JSON_ERROR_SYNTAX_UNKNOWN_CHARACTER, {.syntax = {.character = '@'}}, "unknown character 0x40"},
+        {JSON_ERROR_SYNTAX_UNKNOWN_CHARACTER,
+         {.syntax = {.character = '@'}},
+         "unknown character 0x40"},
         {JSON_ERROR_SYNTAX_INVALID_KEYWORD, {}, "invalid keyword"},
-        {JSON_ERROR_SYNTAX_UNESCAPED_CONTROL, {.syntax = {.character = 1}},
+        {JSON_ERROR_SYNTAX_UNESCAPED_CONTROL,
+         {.syntax = {.character = 1}},
          "unescaped control character 0x01 in string"},
         {JSON_ERROR_SYNTAX_UNTERMINATED_STRING, {}, "unterminated string"},
         {JSON_ERROR_SYNTAX_INVALID_NUMBER, {}, "invalid number"},
-        {JSON_ERROR_SYNTAX_EXPECTED_TOKEN, {.syntax = {.expected = JSON_TOKEN_STRING, .actual = JSON_TOKEN_COMMA}},
+        {JSON_ERROR_SYNTAX_EXPECTED_TOKEN,
+         {.syntax = {.expected = JSON_TOKEN_STRING, .actual = JSON_TOKEN_COMMA}},
          "expected STRING, got COMMA"},
-        {JSON_ERROR_SYNTAX_EXPECTED_COMMA, {.syntax = {.actual = JSON_TOKEN_RBRACE}},
+        {JSON_ERROR_SYNTAX_EXPECTED_COMMA,
+         {.syntax = {.actual = JSON_TOKEN_RBRACE}},
          "expected COMMA, got RBRACE"},
-        {JSON_ERROR_ESCAPE_INVALID_SEQUENCE, {.escape = {.character = 'q'}}, "invalid escape sequence \\q"},
+        {JSON_ERROR_ESCAPE_INVALID_SEQUENCE,
+         {.escape = {.character = 'q'}},
+         "invalid escape sequence \\q"},
         {JSON_ERROR_ESCAPE_INVALID_UNICODE, {}, "invalid Unicode escape"},
-        {JSON_ERROR_TYPE_MISMATCH, {.type = {.expected = JSON_EXPECTED_OBJECT, .actual = JSON_TOKEN_NULL}},
+        {JSON_ERROR_TYPE_MISMATCH,
+         {.type = {.expected = JSON_EXPECTED_OBJECT, .actual = JSON_TOKEN_NULL}},
          "expected OBJECT, got NULL"},
         {JSON_ERROR_RANGE_NUMBER, {}, "number out of range"},
-        {JSON_ERROR_RANGE_NUMBER_LENGTH, {.range = {.limit = 12}}, "number length exceeds limit 12"},
+        {JSON_ERROR_RANGE_NUMBER_LENGTH,
+         {.range = {.limit = 12}},
+         "number length exceeds limit 12"},
         {JSON_ERROR_RANGE_DEPTH, {.range = {.limit = 3}}, "JSON depth exceeds limit 3"},
-        {JSON_ERROR_RANGE_BUFFER_TOO_SMALL, {.range = {.limit = 9}}, "output buffer too small; need 9 bytes"},
+        {JSON_ERROR_RANGE_BUFFER_TOO_SMALL,
+         {.range = {.limit = 9}},
+         "output buffer too small; need 9 bytes"},
         {JSON_ERROR_OTHER_NO_MEMORY, {}, "out of memory"},
         {JSON_ERROR_OTHER_INVALID_STATE, {}, "invalid parser state"},
     };
@@ -376,8 +398,8 @@ TEST_F(JsonPullTest, EstimatesMaximumSizeValuesWithoutPrintf)
     parser.error.detail.range.limit = SIZE_MAX;
 
     const std::string number = std::to_string(SIZE_MAX);
-    const std::string expected =
-        "line " + number + ", column " + number + ": output buffer too small; need " + number + " bytes";
+    const std::string expected = "line " + number + ", column " + number +
+                                 ": output buffer too small; need " + number + " bytes";
     const size_t needed = json_estimate_error_msg_len(&parser);
     ASSERT_EQ(needed, expected.size());
 
@@ -400,16 +422,16 @@ TEST_F(JsonPullTest, PreservesTokenizerRootCause)
 TEST_F(JsonPullTest, ReportsNumberAndDepthRanges)
 {
     json_parser parser{};
-    int64_t integer = 0;
+    long integer = 0;
     json_parser_init(&parser, &allocator, make_slice("9223372036854775808"));
-    EXPECT_FALSE(json_decode_i64(&parser, &integer));
+    EXPECT_FALSE(json_decode_long(&parser, &integer));
     EXPECT_EQ(parser.error.code, JSON_ERROR_RANGE_NUMBER);
     EXPECT_EQ(parser.error.detail.range.target, JSON_RANGE_NUMBER_VALUE);
 
     const char *long_number = "000000000000000000000000000000000";
     json_parser_init(&parser, &allocator, make_slice(long_number));
     parser.max_number_len = strlen(long_number);
-    EXPECT_FALSE(json_decode_i64(&parser, &integer));
+    EXPECT_FALSE(json_decode_long(&parser, &integer));
     EXPECT_EQ(parser.error.code, JSON_ERROR_RANGE_NUMBER_LENGTH);
     EXPECT_EQ(parser.error.detail.range.limit, strlen(long_number));
 

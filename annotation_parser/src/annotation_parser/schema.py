@@ -4,7 +4,14 @@ from dataclasses import dataclass, replace
 from enum import Enum
 
 from .annotations import Annotation
-from .clang_frontend import AstField, AstRecord, AstType, AstTypeKind, TranslationUnit
+from .clang_frontend import (
+    AstField,
+    AstRecord,
+    AstType,
+    AstTypeKind,
+    BasicType,
+    TranslationUnit,
+)
 from .diagnostics import AnnotationError, SourceLocation
 
 
@@ -35,6 +42,7 @@ class TypeSchema:
     target: str | None = None
     capacity: int | None = None
     owns_resources: bool = False
+    basic_type: BasicType | None = None
 
 
 @dataclass(frozen=True)
@@ -327,20 +335,43 @@ class SchemaBuilder:
                 target=target,
             )
         elif item.kind is AstTypeKind.BOOL:
-            value = TypeSchema("bool", TypeKind.BOOL, item.c_type, 8, False)
+            value = TypeSchema(
+                "basic:bool",
+                TypeKind.BOOL,
+                item.c_type,
+                8,
+                False,
+                basic_type=BasicType.BOOL,
+            )
         elif item.kind is AstTypeKind.INTEGER:
+            if item.basic_type is None:
+                raise AnnotationError(
+                    f"missing basic type identity for {item.c_type!r}"
+                )
             bits = item.bits or 32
             signed = bool(item.signed)
             value = TypeSchema(
-                f"integer:{'i' if signed else 'u'}{bits}",
+                f"basic:{item.basic_type.value}",
                 TypeKind.INTEGER,
                 item.c_type,
                 bits,
                 signed,
+                basic_type=item.basic_type,
             )
         elif item.kind is AstTypeKind.FLOAT:
+            if item.basic_type is None:
+                raise AnnotationError(
+                    f"missing basic type identity for {item.c_type!r}"
+                )
             bits = item.bits or 64
-            value = TypeSchema(f"float:{bits}", TypeKind.FLOAT, item.c_type, bits, True)
+            value = TypeSchema(
+                f"basic:{item.basic_type.value}",
+                TypeKind.FLOAT,
+                item.c_type,
+                bits,
+                True,
+                basic_type=item.basic_type,
+            )
         elif item.kind is AstTypeKind.ENUM:
             value = TypeSchema(
                 f"enum:{item.name}",
@@ -348,6 +379,7 @@ class SchemaBuilder:
                 item.c_type,
                 item.bits or 32,
                 bool(item.signed),
+                basic_type=item.basic_type or BasicType.INT,
             )
         elif item.kind is AstTypeKind.RECORD and item.name is not None:
             record = self.ast_records.get(item.name)
@@ -641,6 +673,8 @@ def format_schema(schema: Schema) -> str:
         parts = [f"kind={item.kind.value}", f"c-type={item.c_type!r}"]
         if item.target:
             parts.append(f"target={item.target}")
+        if item.basic_type is not None:
+            parts.append(f"basic={item.basic_type.value}")
         if item.capacity is not None:
             parts.append(f"capacity={item.capacity}")
         if item.owns_resources:

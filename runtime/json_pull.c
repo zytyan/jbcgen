@@ -1,8 +1,13 @@
 #include <errno.h>
+#include <float.h>
+#include <limits.h>
+#include <stdint.h>
 #include <stdlib.h>
+
 #include "json_pull.h"
 #include "json_str_slice.h"
 #include "json_tokenizer.h"
+
 static void json_free_nullable(const json_allocator *allocator, void *ptr)
 {
     if (ptr) {
@@ -242,72 +247,7 @@ static bool json_decode_i64_in_range(json_parser *parser, int64_t *out, int64_t 
     return true;
 }
 
-bool json_decode_i8(json_parser *parser, int8_t *out)
-{
-    int64_t value;
-    if (!json_decode_i64_in_range(parser, &value, INT8_MIN, INT8_MAX)) {
-        return false;
-    }
-    *out = (int8_t)value;
-    return true;
-}
-
-bool json_decode_i16(json_parser *parser, int16_t *out)
-{
-    int64_t value;
-    if (!json_decode_i64_in_range(parser, &value, INT16_MIN, INT16_MAX)) {
-        return false;
-    }
-    *out = (int16_t)value;
-    return true;
-}
-
-bool json_decode_i32(json_parser *parser, int32_t *out)
-{
-    int64_t value;
-    if (!json_decode_i64_in_range(parser, &value, INT32_MIN, INT32_MAX)) {
-        return false;
-    }
-    *out = (int32_t)value;
-    return true;
-}
-
-bool json_decode_i64(json_parser *parser, int64_t *out)
-{
-    return json_decode_i64_in_range(parser, out, INT64_MIN, INT64_MAX);
-}
-
-bool json_decode_u8(json_parser *parser, uint8_t *out)
-{
-    int64_t value;
-    if (!json_decode_i64_in_range(parser, &value, 0, UINT8_MAX)) {
-        return false;
-    }
-    *out = (uint8_t)value;
-    return true;
-}
-
-bool json_decode_u16(json_parser *parser, uint16_t *out)
-{
-    int64_t value;
-    if (!json_decode_i64_in_range(parser, &value, 0, UINT16_MAX)) {
-        return false;
-    }
-    *out = (uint16_t)value;
-    return true;
-}
-
-bool json_decode_u32(json_parser *parser, uint32_t *out)
-{
-    int64_t value;
-    if (!json_decode_i64_in_range(parser, &value, 0, UINT32_MAX)) {
-        return false;
-    }
-    *out = (uint32_t)value;
-    return true;
-}
-
-bool json_decode_u64(json_parser *parser, uint64_t *out)
+static bool json_decode_u64_in_range(json_parser *parser, uint64_t *out, uint64_t max)
 {
     union json_number num = {0};
     json_token *token = json_peek_token(parser);
@@ -323,12 +263,70 @@ bool json_decode_u64(json_parser *parser, uint64_t *out)
     if (!json_parse_number(parser, &slice, JSON_NUMBER_U64, &num)) {
         return false;
     }
+    if (num.u64 > max) {
+        json_set_integer_range_error(parser, &slice);
+        return false;
+    }
     *out = num.u64;
     json_advance_token(parser);
     return true;
 }
 
-bool json_decode_f64(json_parser *parser, double *out)
+bool json_decode_char(json_parser *parser, char *out)
+{
+    if (CHAR_MIN < 0) {
+        int64_t value;
+        if (!json_decode_i64_in_range(parser, &value, CHAR_MIN, CHAR_MAX)) {
+            return false;
+        }
+        *out = (char)value;
+        return true;
+    }
+    uint64_t value;
+    if (!json_decode_u64_in_range(parser, &value, CHAR_MAX)) {
+        return false;
+    }
+    *out = (char)value;
+    return true;
+}
+
+#define DEFINE_SIGNED_DECODER(name, c_type, minimum, maximum)                                      \
+    bool json_decode_##name(json_parser *parser, c_type *out)                                      \
+    {                                                                                              \
+        int64_t value;                                                                             \
+        if (!json_decode_i64_in_range(parser, &value, minimum, maximum)) {                         \
+            return false;                                                                          \
+        }                                                                                          \
+        *out = (c_type)value;                                                                      \
+        return true;                                                                               \
+    }
+
+#define DEFINE_UNSIGNED_DECODER(name, c_type, maximum)                                             \
+    bool json_decode_##name(json_parser *parser, c_type *out)                                      \
+    {                                                                                              \
+        uint64_t value;                                                                            \
+        if (!json_decode_u64_in_range(parser, &value, maximum)) {                                  \
+            return false;                                                                          \
+        }                                                                                          \
+        *out = (c_type)value;                                                                      \
+        return true;                                                                               \
+    }
+
+DEFINE_SIGNED_DECODER(signed_char, signed char, SCHAR_MIN, SCHAR_MAX)
+DEFINE_UNSIGNED_DECODER(unsigned_char, unsigned char, UCHAR_MAX)
+DEFINE_SIGNED_DECODER(short, short, SHRT_MIN, SHRT_MAX)
+DEFINE_UNSIGNED_DECODER(unsigned_short, unsigned short, USHRT_MAX)
+DEFINE_SIGNED_DECODER(int, int, INT_MIN, INT_MAX)
+DEFINE_UNSIGNED_DECODER(unsigned_int, unsigned int, UINT_MAX)
+DEFINE_SIGNED_DECODER(long, long, LONG_MIN, LONG_MAX)
+DEFINE_UNSIGNED_DECODER(unsigned_long, unsigned long, ULONG_MAX)
+DEFINE_SIGNED_DECODER(long_long, long long, LLONG_MIN, LLONG_MAX)
+DEFINE_UNSIGNED_DECODER(unsigned_long_long, unsigned long long, ULLONG_MAX)
+
+#undef DEFINE_SIGNED_DECODER
+#undef DEFINE_UNSIGNED_DECODER
+
+bool json_decode_double(json_parser *parser, double *out)
 {
     union json_number num = {0};
     json_token *token = json_peek_token(parser);
@@ -353,6 +351,25 @@ bool json_decode_f64(json_parser *parser, double *out)
     return false;
 }
 
+bool json_decode_float(json_parser *parser, float *out)
+{
+    const json_token *token = json_peek_token(parser);
+    json_slice slice = token->str;
+    if (token->kind == JSON_TOKEN_STRING) {
+        slice = (json_slice){token->str.ptr + 1, token->str.len - 2};
+    }
+    double value;
+    if (!json_decode_double(parser, &value)) {
+        return false;
+    }
+    if (value < -FLT_MAX || value > FLT_MAX) {
+        json_set_integer_range_error(parser, &slice);
+        return false;
+    }
+    *out = (float)value;
+    return true;
+}
+
 bool json_decode_string(json_parser *parser, json_cow_str *out)
 {
     json_token *token = json_peek_token(parser);
@@ -366,7 +383,8 @@ bool json_decode_string(json_parser *parser, json_cow_str *out)
         json_slice inner = {token->str.ptr + 1, token->str.len - 2};
         json_string decoded = {0};
         size_t error_offset = 0;
-        json_error_code code = json_str_unescape(parser->allocator, &inner, &decoded, &error_offset);
+        json_error_code code =
+            json_str_unescape(parser->allocator, &inner, &decoded, &error_offset);
         if (code != JSON_ERROR_NONE) {
             const char *error_pos = inner.ptr + error_offset;
             if (error_pos > inner.ptr + inner.len) {
@@ -527,24 +545,24 @@ bool json_skip_value(json_parser *parser)
     json_token_kind kind = json_peek_token(parser)->kind;
 
     switch (kind) {
-        case JSON_TOKEN_NULL:
-        case JSON_TOKEN_TRUE:
-        case JSON_TOKEN_FALSE:
-        case JSON_TOKEN_INT:
-        case JSON_TOKEN_FLOAT:
-        case JSON_TOKEN_STRING:
-        case JSON_TOKEN_ESCAPE_STRING:
-            json_advance_token(parser);
-            return true;
+    case JSON_TOKEN_NULL:
+    case JSON_TOKEN_TRUE:
+    case JSON_TOKEN_FALSE:
+    case JSON_TOKEN_INT:
+    case JSON_TOKEN_FLOAT:
+    case JSON_TOKEN_STRING:
+    case JSON_TOKEN_ESCAPE_STRING:
+        json_advance_token(parser);
+        return true;
 
-        case JSON_TOKEN_LBRACKET:
-            return json_skip_array(parser);
+    case JSON_TOKEN_LBRACKET:
+        return json_skip_array(parser);
 
-        case JSON_TOKEN_LBRACE:
-            return json_skip_object(parser);
+    case JSON_TOKEN_LBRACE:
+        return json_skip_object(parser);
 
-        default:
-            json_set_type_mismatch(parser, JSON_EXPECTED_VALUE);
-            return false;
+    default:
+        json_set_type_mismatch(parser, JSON_EXPECTED_VALUE);
+        return false;
     }
 }

@@ -25,6 +25,23 @@ class AstTypeKind(Enum):
     UNKNOWN = "unknown"
 
 
+class BasicType(Enum):
+    BOOL = "bool"
+    CHAR = "char"
+    SIGNED_CHAR = "signed-char"
+    UNSIGNED_CHAR = "unsigned-char"
+    SHORT = "short"
+    UNSIGNED_SHORT = "unsigned-short"
+    INT = "int"
+    UNSIGNED_INT = "unsigned-int"
+    LONG = "long"
+    UNSIGNED_LONG = "unsigned-long"
+    LONG_LONG = "long-long"
+    UNSIGNED_LONG_LONG = "unsigned-long-long"
+    FLOAT = "float"
+    DOUBLE = "double"
+
+
 @dataclass(frozen=True)
 class AstType:
     kind: AstTypeKind
@@ -34,6 +51,7 @@ class AstType:
     name: str | None = None
     target: AstType | None = None
     capacity: int | None = None
+    basic_type: BasicType | None = None
 
 
 @dataclass(frozen=True)
@@ -109,29 +127,33 @@ class TranslationUnit:
     functions: tuple[AstFunction, ...]
 
 
-_INTEGER_TYPES: dict[str, tuple[int, bool]] = {
-    "char": (8, True),
-    "signed char": (8, True),
-    "unsigned char": (8, False),
-    "short": (16, True),
-    "short int": (16, True),
-    "signed short": (16, True),
-    "unsigned short": (16, False),
-    "unsigned short int": (16, False),
-    "int": (32, True),
-    "signed": (32, True),
-    "signed int": (32, True),
-    "unsigned": (32, False),
-    "unsigned int": (32, False),
-    "long": (64, True),
-    "long int": (64, True),
-    "signed long": (64, True),
-    "unsigned long": (64, False),
-    "unsigned long int": (64, False),
-    "long long": (64, True),
-    "long long int": (64, True),
-    "unsigned long long": (64, False),
-    "unsigned long long int": (64, False),
+_INTEGER_TYPES: dict[str, tuple[BasicType, int, bool]] = {
+    "char": (BasicType.CHAR, 8, True),
+    "signed char": (BasicType.SIGNED_CHAR, 8, True),
+    "unsigned char": (BasicType.UNSIGNED_CHAR, 8, False),
+    "short": (BasicType.SHORT, 16, True),
+    "short int": (BasicType.SHORT, 16, True),
+    "signed short": (BasicType.SHORT, 16, True),
+    "signed short int": (BasicType.SHORT, 16, True),
+    "unsigned short": (BasicType.UNSIGNED_SHORT, 16, False),
+    "unsigned short int": (BasicType.UNSIGNED_SHORT, 16, False),
+    "int": (BasicType.INT, 32, True),
+    "signed": (BasicType.INT, 32, True),
+    "signed int": (BasicType.INT, 32, True),
+    "unsigned": (BasicType.UNSIGNED_INT, 32, False),
+    "unsigned int": (BasicType.UNSIGNED_INT, 32, False),
+    "long": (BasicType.LONG, 64, True),
+    "long int": (BasicType.LONG, 64, True),
+    "signed long": (BasicType.LONG, 64, True),
+    "signed long int": (BasicType.LONG, 64, True),
+    "unsigned long": (BasicType.UNSIGNED_LONG, 64, False),
+    "unsigned long int": (BasicType.UNSIGNED_LONG, 64, False),
+    "long long": (BasicType.LONG_LONG, 64, True),
+    "long long int": (BasicType.LONG_LONG, 64, True),
+    "signed long long": (BasicType.LONG_LONG, 64, True),
+    "signed long long int": (BasicType.LONG_LONG, 64, True),
+    "unsigned long long": (BasicType.UNSIGNED_LONG_LONG, 64, False),
+    "unsigned long long int": (BasicType.UNSIGNED_LONG_LONG, 64, False),
 }
 
 
@@ -146,7 +168,7 @@ class CTypeParser:
     def __init__(
         self,
         record_names: Iterable[str] = (),
-        enum_types: dict[str, tuple[int, bool]] | None = None,
+        enum_types: dict[str, tuple[BasicType, int, bool]] | None = None,
         typedefs: dict[str, tuple[str, str | None]] | None = None,
     ):
         self.record_names = set(record_names)
@@ -186,19 +208,33 @@ class CTypeParser:
         if text == "void":
             return AstType(AstTypeKind.VOID, c_type, name="void")
         if text in {"_Bool", "bool"}:
-            return AstType(AstTypeKind.BOOL, c_type, bits=8, signed=False, name=text)
-        if text in _INTEGER_TYPES:
-            bits, signed = _INTEGER_TYPES[text]
             return AstType(
-                AstTypeKind.INTEGER, c_type, bits=bits, signed=signed, name=text
+                AstTypeKind.BOOL,
+                c_type,
+                bits=8,
+                signed=False,
+                name=text,
+                basic_type=BasicType.BOOL,
+            )
+        if text in _INTEGER_TYPES:
+            basic_type, bits, signed = _INTEGER_TYPES[text]
+            return AstType(
+                AstTypeKind.INTEGER,
+                c_type,
+                bits=bits,
+                signed=signed,
+                name=text,
+                basic_type=basic_type,
             )
         if text in {"float", "double"}:
+            basic_type = BasicType.FLOAT if text == "float" else BasicType.DOUBLE
             return AstType(
                 AstTypeKind.FLOAT,
                 c_type,
                 bits=32 if text == "float" else 64,
                 signed=True,
                 name=text,
+                basic_type=basic_type,
             )
         if text.startswith("struct "):
             return AstType(
@@ -206,16 +242,28 @@ class CTypeParser:
             )
         if text.startswith("enum "):
             name = text.removeprefix("enum ").strip()
-            bits, signed = self.enum_types.get(name, (32, True))
+            basic_type, bits, signed = self.enum_types.get(
+                name, (BasicType.INT, 32, True)
+            )
             return AstType(
-                AstTypeKind.ENUM, c_type, bits=bits, signed=signed, name=name
+                AstTypeKind.ENUM,
+                c_type,
+                bits=bits,
+                signed=signed,
+                name=name,
+                basic_type=basic_type,
             )
         if text in self.record_names:
             return AstType(AstTypeKind.RECORD, c_type, name=text)
         if text in self.enum_types:
-            bits, signed = self.enum_types[text]
+            basic_type, bits, signed = self.enum_types[text]
             return AstType(
-                AstTypeKind.ENUM, c_type, bits=bits, signed=signed, name=text
+                AstTypeKind.ENUM,
+                c_type,
+                bits=bits,
+                signed=signed,
+                name=text,
+                basic_type=basic_type,
             )
         if text in self.typedefs and text not in resolving:
             alias_spelling, alias_desugared = self.typedefs[text]
@@ -233,6 +281,7 @@ class CTypeParser:
                 resolved.name,
                 resolved.target,
                 resolved.capacity,
+                resolved.basic_type,
             )
         canonical = _normalize_type(desugared) if desugared else ""
         if canonical and canonical != text:
@@ -245,6 +294,7 @@ class CTypeParser:
                 resolved.name,
                 resolved.target,
                 resolved.capacity,
+                resolved.basic_type,
             )
         return AstType(AstTypeKind.UNKNOWN, c_type, name=text)
 
@@ -254,7 +304,7 @@ def parse_type_spelling(
     desugared: str | None = None,
     *,
     record_names: Iterable[str] = (),
-    enum_types: dict[str, tuple[int, bool]] | None = None,
+    enum_types: dict[str, tuple[BasicType, int, bool]] | None = None,
     typedefs: dict[str, tuple[str, str | None]] | None = None,
 ) -> AstType:
     """Convenience entry point used by frontend-focused tests and adapters."""
@@ -455,7 +505,7 @@ class ClangFrontend:
 
         record_names: set[str] = set()
         typedef_specs: dict[str, tuple[str, str | None]] = {}
-        enum_types: dict[str, tuple[int, bool]] = {}
+        enum_types: dict[str, tuple[BasicType, int, bool]] = {}
         for node in _walk(root):
             kind = node.get("kind")
             if kind == "RecordDecl" and node.get("completeDefinition"):
@@ -473,7 +523,9 @@ class ClangFrontend:
                 underlying = _normalize_type(
                     node.get("fixedUnderlyingType", {}).get("qualType", "int")
                 )
-                enum_types[node["name"]] = _INTEGER_TYPES.get(underlying, (32, True))
+                enum_types[node["name"]] = _INTEGER_TYPES.get(
+                    underlying, (BasicType.INT, 32, True)
+                )
         type_parser = CTypeParser(record_names, enum_types, typedef_specs)
 
         for node in _walk(root):

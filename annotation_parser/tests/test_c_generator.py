@@ -129,6 +129,91 @@ class CGeneratorTest(unittest.TestCase):
                 source.index('{{"identifier", sizeof("identifier") - 1}, 0}'),
             )
             self.assertIn(".flags = JSON_REFLECT_REQUIRED", source)
+            self.assertIn("&json_reflect_type_int", source)
+            self.assertNotIn("static const json_reflect_type jbc_type_basic", source)
+
+    def test_all_basic_types_use_shared_runtime_descriptors(self) -> None:
+        header_source = """
+        #include "json_pull.h"
+        typedef unsigned long Counter;
+        /// @jsonStruct
+        typedef struct Scalars {
+          _Bool boolean;
+          char plainChar;
+          signed char signedChar;
+          unsigned char unsignedChar;
+          short signedShort;
+          unsigned short unsignedShort;
+          int signedInt;
+          unsigned int unsignedInt;
+          long signedLong;
+          Counter aliasedUnsignedLong;
+          long long signedLongLong;
+          unsigned long long unsignedLongLong;
+          float floatValue;
+          double doubleValue;
+        } Scalars;
+        /// @jsonDecode
+        bool decodeScalars(json_parser *parser, Scalars *value);
+        /// @jsonCleanup
+        void releaseScalars(json_allocator *allocator, Scalars *value);
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            header = path / "scalars.h"
+            output = path / "scalars_json.c"
+            header.write_text(textwrap.dedent(header_source), encoding="utf-8")
+            schema = build_schema(ClangFrontend().parse(header, ["-I", str(RUNTIME)]))
+            source = generate_c(
+                schema,
+                build_generate_plan(schema),
+                "scalars.h",
+                source_header="scalars.h",
+                source_sha256=hashlib.sha256(
+                    textwrap.dedent(header_source).encode()
+                ).hexdigest(),
+            )
+            output.write_text(source, encoding="utf-8")
+            process = subprocess.run(
+                [
+                    "clang",
+                    "-std=c11",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    "-I",
+                    str(RUNTIME),
+                    "-I",
+                    str(path),
+                    "-fsyntax-only",
+                    str(output),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(process.returncode, 0, process.stderr + "\n" + source)
+            self.assertNotIn("static const json_reflect_type jbc_type_basic", source)
+            for field_name in (
+                "boolean",
+                "plainChar",
+                "signedChar",
+                "unsignedChar",
+                "signedShort",
+                "unsignedShort",
+                "signedInt",
+                "unsignedInt",
+                "signedLong",
+                "aliasedUnsignedLong",
+                "signedLongLong",
+                "unsignedLongLong",
+                "floatValue",
+                "doubleValue",
+            ):
+                self.assertIn(
+                    f"JSON_REFLECT_BASIC_TYPE(((struct Scalars *)0)->{field_name})",
+                    source,
+                )
 
     def test_array_record_and_anonymous_typedef_compile_as_c11(self) -> None:
         header_source = """

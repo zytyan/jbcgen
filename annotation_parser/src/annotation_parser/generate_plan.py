@@ -101,6 +101,12 @@ class GeneratePlanBuilder:
         def visit(type_id: str) -> None:
             if type_id in used:
                 return
+            if self.types[type_id].kind in {
+                TypeKind.BOOL,
+                TypeKind.INTEGER,
+                TypeKind.FLOAT,
+            }:
+                return
             used.add(type_id)
             target = self.types[type_id].target
             if target is not None:

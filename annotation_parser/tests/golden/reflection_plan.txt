@@ -2,8 +2,7 @@ GeneratePlan
   descriptors
     dynamic-array:record:Child -> jbc_type_dynamic_array_record_Child
     enum:Kind -> jbc_type_enum_Kind
-    fixed-array:3:integer:i32 -> jbc_type_fixed_array_3_integer_i32
-    integer:i32 -> jbc_type_integer_i32
+    fixed-array:3:basic:int -> jbc_type_fixed_array_3_basic_int
     pointer:record:Child -> jbc_type_pointer_record_Child
     record:Child -> jbc_type_Child
     record:Root -> jbc_type_Root
@@ -17,11 +16,11 @@ GeneratePlan
   type record:Root shape=object descriptor=jbc_type_Root record=jbc_record_Root
     decode-failure -> json_reflect_release(self)
     dependencies ('record:Child',)
-    field id type=integer:i32 keys=('identifier', 'id') [index=0 required]
+    field id type=basic:int keys=('identifier', 'id') [index=0 required]
     field name type=string:fixed:16 keys=('name',) [index=1]
     field children type=dynamic-array:record:Child keys=('children',) [index=2]
       length childCount
-    field values type=fixed-array:3:integer:i32 keys=('values',) [index=3]
+    field values type=fixed-array:3:basic:int keys=('values',) [index=3]
       length valueCount
     field optional type=pointer:record:Child keys=('optional',) [index=4]
     field kind type=enum:Kind keys=('kind',) [index=5]

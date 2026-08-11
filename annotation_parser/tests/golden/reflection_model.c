@@ -3,7 +3,9 @@
  * Source SHA-256: b26d72f41637271e145a37110fcde24432f667323246483cfa49bafc7458335c
  */
 #include "json_reflect.h"
+#include "json_reflect_basic_types.h"
 #include <stdbool.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -11,8 +13,7 @@
 
 static const json_reflect_type jbc_type_dynamic_array_record_Child;
 static const json_reflect_type jbc_type_enum_Kind;
-static const json_reflect_type jbc_type_fixed_array_3_integer_i32;
-static const json_reflect_type jbc_type_integer_i32;
+static const json_reflect_type jbc_type_fixed_array_3_basic_int;
 static const json_reflect_type jbc_type_pointer_record_Child;
 static const json_reflect_type jbc_type_Child;
 static const json_reflect_type jbc_type_Root;
@@ -23,6 +24,7 @@ static const json_reflect_record jbc_record_Root;
 
 static const json_reflect_type jbc_type_dynamic_array_record_Child = {
     .kind = JSON_REFLECT_DYNAMIC_ARRAY,
+    .basic_id = JSON_REFLECT_BASIC_ID_NONE,
     .bits = 0,
     .flags = 0,
     .size = sizeof(Child *),
@@ -33,28 +35,29 @@ static const json_reflect_type jbc_type_dynamic_array_record_Child = {
 
 static const json_reflect_type jbc_type_enum_Kind = {
     .kind = JSON_REFLECT_ENUM,
-    .bits = JSON_REFLECT_BASIC_BITS((Kind){0}),
-    .flags = JSON_REFLECT_BASIC_FLAGS((Kind){0}),
+    .basic_id = JSON_REFLECT_BASIC_ID((Kind){0}),
+    .bits = sizeof(Kind) * CHAR_BIT,
+    .flags = JSON_REFLECT_BASIC_SIGNED((Kind){0}),
     .size = sizeof(Kind),
     .capacity = 0,
     .target = NULL,
     .record = NULL,
 };
 
-static const json_reflect_type jbc_type_fixed_array_3_integer_i32 = {
+static const json_reflect_type jbc_type_fixed_array_3_basic_int = {
     .kind = JSON_REFLECT_FIXED_ARRAY,
+    .basic_id = JSON_REFLECT_BASIC_ID_NONE,
     .bits = 0,
     .flags = 0,
     .size = sizeof(int[3]),
     .capacity = 3,
-    .target = &jbc_type_integer_i32,
+    .target = &json_reflect_type_int,
     .record = NULL,
 };
 
-static const json_reflect_type jbc_type_integer_i32 = JSON_REFLECT_BASIC_TYPE_INIT((int){0});
-
 static const json_reflect_type jbc_type_pointer_record_Child = {
     .kind = JSON_REFLECT_POINTER,
+    .basic_id = JSON_REFLECT_BASIC_ID_NONE,
     .bits = 0,
     .flags = 0,
     .size = sizeof(Child *),
@@ -65,6 +68,7 @@ static const json_reflect_type jbc_type_pointer_record_Child = {
 
 static const json_reflect_type jbc_type_string_fixed_16 = {
     .kind = JSON_REFLECT_STRING,
+    .basic_id = JSON_REFLECT_BASIC_ID_NONE,
     .bits = 0,
     .flags = 0,
     .size = sizeof(char[16]),
@@ -75,6 +79,7 @@ static const json_reflect_type jbc_type_string_fixed_16 = {
 
 static const json_reflect_type jbc_type_string_pointer = {
     .kind = JSON_REFLECT_STRING,
+    .basic_id = JSON_REFLECT_BASIC_ID_NONE,
     .bits = 0,
     .flags = 0,
     .size = sizeof(char *),
@@ -118,6 +123,7 @@ static const json_reflect_record jbc_record_Child = {
 };
 static const json_reflect_type jbc_type_Child = {
     .kind = JSON_REFLECT_RECORD,
+    .basic_id = JSON_REFLECT_BASIC_ID_NONE,
     .bits = 0,
     .flags = 0,
     .size = sizeof(struct Child),
@@ -187,7 +193,7 @@ static const json_reflect_field jbc_record_Root_fields[] = {
     {
         .primary_key = {"values", sizeof("values") - 1},
         .offset = offsetof(struct Root, values),
-        .type = &jbc_type_fixed_array_3_integer_i32,
+        .type = &jbc_type_fixed_array_3_basic_int,
         .constraints = NULL,
         .count_offset = offsetof(struct Root, valueCount),
         .count_type = JSON_REFLECT_BASIC_TYPE(((struct Root *)0)->valueCount),
@@ -239,6 +245,7 @@ static const json_reflect_record jbc_record_Root = {
 };
 static const json_reflect_type jbc_type_Root = {
     .kind = JSON_REFLECT_RECORD,
+    .basic_id = JSON_REFLECT_BASIC_ID_NONE,
     .bits = 0,
     .flags = 0,
     .size = sizeof(struct Root),

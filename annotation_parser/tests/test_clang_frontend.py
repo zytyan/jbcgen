@@ -4,7 +4,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from annotation_parser.clang_frontend import AstTypeKind, ClangFrontend
+from annotation_parser.clang_frontend import AstTypeKind, BasicType, ClangFrontend
 
 
 @unittest.skipUnless(shutil.which("clang"), "clang is required")
@@ -95,10 +95,14 @@ class ClangFrontendTest(unittest.TestCase):
             """
             #include <stdint.h>
             typedef uint16_t Count;
+            typedef unsigned long CountLong;
             typedef enum Mode { MODE_A, MODE_B } Mode;
             /// @jsonStruct
             typedef struct Types {
               Count count;
+              CountLong countLong;
+              long signedLong;
+              long long signedLongLong;
               Mode mode;
               struct Types *next;
               double samples[2];
@@ -116,6 +120,10 @@ class ClangFrontendTest(unittest.TestCase):
             (fields["count"].kind, fields["count"].bits), (AstTypeKind.INTEGER, 16)
         )
         self.assertFalse(fields["count"].signed)
+        self.assertEqual(fields["count"].basic_type, BasicType.UNSIGNED_SHORT)
+        self.assertEqual(fields["countLong"].basic_type, BasicType.UNSIGNED_LONG)
+        self.assertEqual(fields["signedLong"].basic_type, BasicType.LONG)
+        self.assertEqual(fields["signedLongLong"].basic_type, BasicType.LONG_LONG)
         self.assertEqual(fields["mode"].kind, AstTypeKind.ENUM)
         self.assertEqual(fields["mode"].name, "Mode")
         self.assertEqual(fields["next"].kind, AstTypeKind.POINTER)

@@ -6,6 +6,7 @@ from annotation_parser.clang_frontend import (
     AstRecord,
     AstType,
     AstTypeKind,
+    BasicType,
     TranslationUnit,
     parse_type_spelling,
 )
@@ -36,8 +37,48 @@ def unit(records: tuple[AstRecord, ...]) -> TranslationUnit:
 
 
 class SchemaTest(unittest.TestCase):
+    def test_basic_types_keep_fundamental_identity(self) -> None:
+        declarations = (
+            ("boolean", "_Bool", "basic:bool"),
+            ("plainChar", "char", "basic:char"),
+            ("signedChar", "signed char", "basic:signed-char"),
+            ("unsignedChar", "unsigned char", "basic:unsigned-char"),
+            ("signedShort", "signed short int", "basic:short"),
+            ("unsignedShort", "unsigned short int", "basic:unsigned-short"),
+            ("signedInt", "signed int", "basic:int"),
+            ("unsignedInt", "unsigned int", "basic:unsigned-int"),
+            ("signedLong", "signed long int", "basic:long"),
+            ("unsignedLong", "unsigned long int", "basic:unsigned-long"),
+            ("signedLongLong", "signed long long", "basic:long-long"),
+            (
+                "unsignedLongLong",
+                "unsigned long long",
+                "basic:unsigned-long-long",
+            ),
+            ("floatValue", "float", "basic:float"),
+            ("doubleValue", "double", "basic:double"),
+        )
+        root = AstRecord(
+            "root",
+            "Root",
+            tuple(field(name, c_type) for name, c_type, _ in declarations),
+            parse_annotations("@jsonStruct", LOCATION),
+            LOCATION,
+        )
+        fields = build_schema(unit((root,))).record_map()["record:Root"].fields
+        self.assertEqual(
+            [item.type_id for item in fields],
+            [type_id for _, _, type_id in declarations],
+        )
+
     def test_consumes_structured_frontend_type_without_parsing_c_spelling(self) -> None:
-        structured = AstType(AstTypeKind.INTEGER, "opaque_counter_alias", 16, False)
+        structured = AstType(
+            AstTypeKind.INTEGER,
+            "opaque_counter_alias",
+            16,
+            False,
+            basic_type=BasicType.UNSIGNED_SHORT,
+        )
         root = AstRecord(
             "root",
             "Root",
@@ -47,7 +88,7 @@ class SchemaTest(unittest.TestCase):
         )
         schema = build_schema(unit((root,)))
         value = schema.record_map()["record:Root"].fields[0]
-        self.assertEqual(value.type_id, "integer:u16")
+        self.assertEqual(value.type_id, "basic:unsigned-short")
         self.assertEqual(value.c_type, "opaque_counter_alias")
 
     def test_builds_recursive_reachable_schema_and_length_metadata(self) -> None:
@@ -151,7 +192,7 @@ class SchemaTest(unittest.TestCase):
                 assert storage is not None
                 self.assertEqual(record_schema.shape, RecordShape.ARRAY)
                 self.assertEqual(storage.elems_field_id, f"field:{name}.elems")
-                self.assertEqual(storage.element_type_id, "integer:i32")
+                self.assertEqual(storage.element_type_id, "basic:int")
                 self.assertEqual(
                     storage.length_field_id,
                     f"field:{name}.len" if "len=len" in annotation else None,

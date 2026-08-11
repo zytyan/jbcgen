@@ -8,7 +8,9 @@ C_FILE = r"""
  * Source SHA-256: $source_sha256
  */
 #include "json_reflect.h"
+#include "json_reflect_basic_types.h"
 #include <stdbool.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>

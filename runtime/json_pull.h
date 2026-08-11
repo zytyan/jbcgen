@@ -1,11 +1,10 @@
 #ifndef JSON_PULL_H
 #define JSON_PULL_H
 
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
 #include "json_str_slice.h"
 #include "json_tokenizer.h"
+#include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -15,23 +14,19 @@ bool json_decode_null(json_parser *parser);
 
 bool json_decode_bool(json_parser *parser, bool *out);
 
-bool json_decode_i8(json_parser *parser, int8_t *out);
-
-bool json_decode_i16(json_parser *parser, int16_t *out);
-
-bool json_decode_i32(json_parser *parser, int32_t *out);
-
-bool json_decode_i64(json_parser *parser, int64_t *out);
-
-bool json_decode_u8(json_parser *parser, uint8_t *out);
-
-bool json_decode_u16(json_parser *parser, uint16_t *out);
-
-bool json_decode_u32(json_parser *parser, uint32_t *out);
-
-bool json_decode_u64(json_parser *parser, uint64_t *out);
-
-bool json_decode_f64(json_parser *parser, double *out);
+bool json_decode_char(json_parser *parser, char *out);
+bool json_decode_signed_char(json_parser *parser, signed char *out);
+bool json_decode_unsigned_char(json_parser *parser, unsigned char *out);
+bool json_decode_short(json_parser *parser, short *out);
+bool json_decode_unsigned_short(json_parser *parser, unsigned short *out);
+bool json_decode_int(json_parser *parser, int *out);
+bool json_decode_unsigned_int(json_parser *parser, unsigned int *out);
+bool json_decode_long(json_parser *parser, long *out);
+bool json_decode_unsigned_long(json_parser *parser, unsigned long *out);
+bool json_decode_long_long(json_parser *parser, long long *out);
+bool json_decode_unsigned_long_long(json_parser *parser, unsigned long long *out);
+bool json_decode_float(json_parser *parser, float *out);
+bool json_decode_double(json_parser *parser, double *out);
 
 bool json_decode_string(json_parser *parser, json_cow_str *out);
 

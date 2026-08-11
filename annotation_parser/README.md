@@ -35,7 +35,9 @@ validator 在构建前检查注解命令和参数词汇表；`SchemaBuilder` 负
 
 C generator 使用 5 个固定完整模板，生成 `static const` 类型、record、field、key、storage 和 array-layout 描述表，以及公开 decode/cleanup 的薄包装函数。key entry 只包含 key 和 field ID，按 UTF-8 `(len, memcmp)` 排序后由 runtime 二分查找。通用对象/数组控制流、required、约束、失败回滚与 cleanup 都位于 `json_reflect.c`；生成代码不包含逐字段 callback。
 
-描述符中的偏移和大小使用 C 的 `offsetof` 与 `sizeof`，不固化 Clang 计算出的数字。bool、基础整数和浮点字段通过 `JSON_REFLECT_BASIC_TYPE(真实字段表达式)` 触发 C11 `_Generic`，由最终编译器选择 kind、`sizeof(type) * CHAR_BIT` 和 signedness；typedef 自动匹配兼容基础类型。enum 的 kind 保持显式，bits 和 signedness 同样从实际 enum 类型派生。数组元素 target 所需的共享基础描述符使用同一泛型初始化宏生成。整数、enum、浮点和指针值通过固定宽度临时值及 `memcpy` 访问，沿用 64 位 LP64 假设。JSON binding 字段表与物理 storage 表分离，因此 flatten 和 alias 不会造成重复释放。描述符是生成代码与 runtime 之间的内部接口，不承诺第三方 ABI 稳定性。
+描述符中的偏移和大小使用 C 的 `offsetof` 与 `sizeof`，不固化 Clang 计算出的数字。`json_reflect_basic_types.h/.c` 为每种 C 基本类型提供唯一的只读描述符；基础字段通过 `JSON_REFLECT_BASIC_TYPE(真实字段表达式)` 触发 C11 `_Generic`，typedef 自动匹配兼容基础类型。Schema ID 同样区分 `int`、`long` 和 `long long`，不会因为 LP64 下位宽一致而合并。enum 保留明确的 enum kind 和底层基础整数类型。生成代码不再重复定义基础类型描述符。JSON binding 字段表与物理 storage 表分离，因此 flatten 和 alias 不会造成重复释放。描述符是生成代码与 runtime 之间的内部接口，不承诺第三方 ABI 稳定性。
+
+Runtime 的标量便利函数按基本类型命名：`json_decode_bool`、`json_decode_char`、`json_decode_signed_char`、`json_decode_unsigned_char`、`json_decode_short`、`json_decode_unsigned_short`、`json_decode_int`、`json_decode_unsigned_int`、`json_decode_long`、`json_decode_unsigned_long`、`json_decode_long_long`、`json_decode_unsigned_long_long`、`json_decode_float` 和 `json_decode_double`。旧的按位宽函数不再提供。
 
 ## CLI
 

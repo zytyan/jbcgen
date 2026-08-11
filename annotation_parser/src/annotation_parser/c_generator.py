@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
 from . import c_templates as templates
+from .clang_frontend import BasicType
 from .generate_plan import GeneratePlan, TypePlan
 from .schema import FieldSchema, RecordSchema, RecordShape, Schema, TypeKind, TypeSchema
 
@@ -92,13 +93,24 @@ class CGenerator:
             TypeKind.POINTER: "JSON_REFLECT_POINTER",
         }[item.kind]
 
+    def _basic_id(self, item: TypeSchema) -> str:
+        if item.basic_type is None:
+            return "JSON_REFLECT_BASIC_ID_NONE"
+        return f"JSON_REFLECT_BASIC_ID_{item.basic_type.name}"
+
+    def _basic_type_pointer(self, basic_type: BasicType) -> str:
+        return f"&json_reflect_type_{basic_type.value.replace('-', '_')}"
+
+    def _schema_type_pointer(self, type_id: str) -> str:
+        item = self.types[type_id]
+        if item.basic_type is not None and item.kind is not TypeKind.ENUM:
+            return self._basic_type_pointer(item.basic_type)
+        return f"&{self.descriptors[type_id]}"
+
     def _type_definition(self, item: TypeSchema) -> str:
         if item.kind in {TypeKind.BOOL, TypeKind.INTEGER, TypeKind.FLOAT}:
-            return (
-                f"static const json_reflect_type {self.descriptors[item.id]} = "
-                f"JSON_REFLECT_BASIC_TYPE_INIT(({item.c_type}){{0}});"
-            )
-        target = f"&{self.descriptors[item.target]}" if item.target else "NULL"
+            raise ValueError(f"basic type {item.id} must use its runtime descriptor")
+        target = self._schema_type_pointer(item.target) if item.target else "NULL"
         record = (
             f"&{self.type_plans[item.id].record_descriptor}"
             if item.kind is TypeKind.RECORD
@@ -106,14 +118,17 @@ class CGenerator:
         )
         bits = str(item.bits or 0)
         flags = "JSON_REFLECT_SIGNED" if item.signed else "0"
+        basic_id = self._basic_id(item)
         if item.kind is TypeKind.ENUM:
             expression = f"({item.c_type}){{0}}"
-            bits = f"JSON_REFLECT_BASIC_BITS({expression})"
-            flags = f"JSON_REFLECT_BASIC_FLAGS({expression})"
+            basic_id = f"JSON_REFLECT_BASIC_ID({expression})"
+            bits = f"sizeof({item.c_type}) * CHAR_BIT"
+            flags = f"JSON_REFLECT_BASIC_SIGNED({expression})"
         return "\n".join(
             (
                 f"static const json_reflect_type {self.descriptors[item.id]} = {{",
                 f"    .kind = {self._kind(item)},",
+                f"    .basic_id = {basic_id},",
                 f"    .bits = {bits},",
                 f"    .flags = {flags},",
                 f"    .size = sizeof({item.c_type}),",
@@ -131,7 +146,7 @@ class CGenerator:
         item = self.types[type_id]
         if item.kind in {TypeKind.BOOL, TypeKind.INTEGER, TypeKind.FLOAT}:
             return f"JSON_REFLECT_BASIC_TYPE({expression})"
-        return f"&{self.descriptors[type_id]}"
+        return self._schema_type_pointer(type_id)
 
     def _record_block(self, record: RecordSchema) -> str:
         plan = self.type_plans[record.id]

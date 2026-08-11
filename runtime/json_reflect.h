@@ -2,18 +2,20 @@
 #define JSON_REFLECT_H
 
 #include <stdbool.h>
-#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #include "json_key_dispatch.h"
 #include "json_pull.h"
+#include "json_reflect_basic_types.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef enum json_reflect_kind {
+typedef uint8_t json_reflect_kind;
+
+enum {
     JSON_REFLECT_BOOL,
     JSON_REFLECT_INTEGER,
     JSON_REFLECT_FLOAT,
@@ -23,12 +25,14 @@ typedef enum json_reflect_kind {
     JSON_REFLECT_DYNAMIC_ARRAY,
     JSON_REFLECT_RECORD,
     JSON_REFLECT_POINTER,
-} json_reflect_kind;
+};
 
-typedef enum json_reflect_record_shape {
+typedef uint8_t json_reflect_record_shape;
+
+enum {
     JSON_REFLECT_OBJECT,
     JSON_REFLECT_ARRAY,
-} json_reflect_record_shape;
+};
 
 enum {
     JSON_REFLECT_SIGNED = 1u << 0,
@@ -65,73 +69,8 @@ typedef struct json_reflect_type {
     size_t capacity;
     const struct json_reflect_type *target;
     const struct json_reflect_record *record;
+    json_reflect_basic_id basic_id;
 } json_reflect_type;
-
-#define JSON_REFLECT_BASIC_KIND(value)                                         \
-    _Generic((value),                                                          \
-        _Bool: JSON_REFLECT_BOOL,                                              \
-        char: JSON_REFLECT_INTEGER,                                            \
-        signed char: JSON_REFLECT_INTEGER,                                     \
-        unsigned char: JSON_REFLECT_INTEGER,                                   \
-        short: JSON_REFLECT_INTEGER,                                           \
-        unsigned short: JSON_REFLECT_INTEGER,                                  \
-        int: JSON_REFLECT_INTEGER,                                             \
-        unsigned int: JSON_REFLECT_INTEGER,                                    \
-        long: JSON_REFLECT_INTEGER,                                            \
-        unsigned long: JSON_REFLECT_INTEGER,                                   \
-        long long: JSON_REFLECT_INTEGER,                                       \
-        unsigned long long: JSON_REFLECT_INTEGER,                              \
-        float: JSON_REFLECT_FLOAT,                                             \
-        double: JSON_REFLECT_FLOAT)
-
-#define JSON_REFLECT_BASIC_BITS(value)                                         \
-    _Generic((value),                                                          \
-        _Bool: sizeof(_Bool) * CHAR_BIT,                                       \
-        char: sizeof(char) * CHAR_BIT,                                         \
-        signed char: sizeof(signed char) * CHAR_BIT,                           \
-        unsigned char: sizeof(unsigned char) * CHAR_BIT,                       \
-        short: sizeof(short) * CHAR_BIT,                                       \
-        unsigned short: sizeof(unsigned short) * CHAR_BIT,                     \
-        int: sizeof(int) * CHAR_BIT,                                           \
-        unsigned int: sizeof(unsigned int) * CHAR_BIT,                         \
-        long: sizeof(long) * CHAR_BIT,                                         \
-        unsigned long: sizeof(unsigned long) * CHAR_BIT,                       \
-        long long: sizeof(long long) * CHAR_BIT,                               \
-        unsigned long long: sizeof(unsigned long long) * CHAR_BIT,             \
-        float: sizeof(float) * CHAR_BIT,                                       \
-        double: sizeof(double) * CHAR_BIT)
-
-#define JSON_REFLECT_BASIC_FLAGS(value)                                        \
-    _Generic((value),                                                          \
-        _Bool: 0,                                                              \
-        char: (CHAR_MIN < 0 ? JSON_REFLECT_SIGNED : 0),                        \
-        signed char: JSON_REFLECT_SIGNED,                                      \
-        unsigned char: 0,                                                      \
-        short: JSON_REFLECT_SIGNED,                                            \
-        unsigned short: 0,                                                     \
-        int: JSON_REFLECT_SIGNED,                                              \
-        unsigned int: 0,                                                       \
-        long: JSON_REFLECT_SIGNED,                                             \
-        unsigned long: 0,                                                      \
-        long long: JSON_REFLECT_SIGNED,                                        \
-        unsigned long long: 0,                                                 \
-        float: JSON_REFLECT_SIGNED,                                            \
-        double: JSON_REFLECT_SIGNED)
-
-#define JSON_REFLECT_BASIC_TYPE_INIT(value)                                    \
-    {                                                                          \
-        .kind = JSON_REFLECT_BASIC_KIND(value),                                \
-        .bits = JSON_REFLECT_BASIC_BITS(value),                                \
-        .flags = JSON_REFLECT_BASIC_FLAGS(value),                              \
-        .size = sizeof(value),                                                 \
-        .capacity = 0,                                                         \
-        .target = NULL,                                                        \
-        .record = NULL,                                                        \
-    }
-
-/* File-scope use gives the compound literal static storage duration. */
-#define JSON_REFLECT_BASIC_TYPE(value)                                         \
-    (&(const json_reflect_type)JSON_REFLECT_BASIC_TYPE_INIT(value))
 
 typedef struct json_reflect_field {
     json_slice primary_key;
@@ -170,19 +109,12 @@ typedef struct json_reflect_record {
     const json_reflect_array_layout *array;
 } json_reflect_record;
 
-/* Destination storage must be zero initialized. It is restored to zero on failure. */
-bool json_reflect_decode(
-    json_parser *parser,
-    const json_reflect_type *type,
-    void *out
-);
+/* Destination storage must be zero initialized. It is restored to zero on
+ * failure. */
+bool json_reflect_decode(json_parser *parser, const json_reflect_type *type, void *out);
 
 /* Releasing an already-zero value is valid. */
-void json_reflect_release(
-    json_allocator *allocator,
-    const json_reflect_type *type,
-    void *value
-);
+void json_reflect_release(json_allocator *allocator, const json_reflect_type *type, void *value);
 
 #ifdef __cplusplus
 }
