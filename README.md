@@ -40,6 +40,8 @@ PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
   -o example_json.c --include example/example.h -- -I ../runtime
 ```
 
+可用 `-c compile_commands.json`（或传入其所在目录）复用项目的 Clang 编译选项；`--` 后的显式参数会在数据库参数之后追加。
+
 使用 `--dump-ir schema|plan|all` 可将只读调试文本输出到 stderr。生成文件头记录来源头文件和其 SHA-256；生成结果未变化时不会重写输出文件。
 
 数组容器的 `elems` 必须指定，`len`、`cap` 可独立省略。JSON `[]` 不申请元素缓冲区，结果为 `elems == NULL` 且已有计数字段为 0；`cap` 保存实际可用元素容量。

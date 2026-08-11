@@ -11,6 +11,7 @@ from typing import TextIO
 
 from .c_generator import generate_c
 from .clang_frontend import ClangFrontend
+from .compile_commands import load_compile_command
 from .diagnostics import AnnotationError, FrontendError
 from .generate_plan import build_generate_plan, format_generate_plan
 from .schema import build_schema, format_schema
@@ -26,6 +27,13 @@ def _parser() -> argparse.ArgumentParser:
         "-o", "--output", required=True, type=Path, help="generated C source"
     )
     parser.add_argument("--clang", default="clang", help="clang executable")
+    parser.add_argument(
+        "-c",
+        "--compile-commands",
+        type=Path,
+        metavar="PATH",
+        help="compile_commands.json file or containing directory",
+    )
     parser.add_argument(
         "--include", dest="include", help="header spelling emitted in generated C"
     )
@@ -75,7 +83,16 @@ def run(argv: Sequence[str] | None = None, stderr: TextIO | None = None) -> int:
         clang_arguments = []
     options = _parser().parse_args(tool_arguments)
     try:
-        unit = ClangFrontend(options.clang).parse(options.input, clang_arguments)
+        working_directory = None
+        if options.compile_commands is not None:
+            compile_command = load_compile_command(
+                options.compile_commands, options.input
+            )
+            clang_arguments = [*compile_command.arguments, *clang_arguments]
+            working_directory = compile_command.directory
+        unit = ClangFrontend(options.clang).parse(
+            options.input, clang_arguments, working_directory
+        )
         schema = build_schema(unit)
         plan = build_generate_plan(schema)
         source_bytes = options.input.read_bytes()

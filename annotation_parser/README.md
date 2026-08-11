@@ -41,10 +41,12 @@ C generator 使用 5 个固定完整模板，生成 `static const` 类型、reco
 
 ```text
 annotation-parser INPUT.h -o OUTPUT.c \
-  [--clang CLANG] [--include HEADER] \
+  [--clang CLANG] [-c PATH] [--include HEADER] \
   [--dump-ir schema|plan|all] \
   [-- <clang 参数>...]
 ```
+
+`-c/--compile-commands` 接受 `compile_commands.json` 文件或其所在目录。精确匹配输入文件时使用对应条目；处理通常不在数据库中的头文件时，选择目录最近的 translation unit，同名 stem 优先。编译器、输入文件、`-c`、依赖生成和输出参数会被剔除，其余参数在数据库记录的 `directory` 下传给 Clang。`--` 后的参数最后追加，可覆盖数据库中的设置。
 
 开发目录中可直接运行：
 

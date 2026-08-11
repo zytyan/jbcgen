@@ -398,7 +398,10 @@ class ClangFrontend:
         self.clang = clang
 
     def parse(
-        self, input_file: Path, clang_args: Iterable[str] = ()
+        self,
+        input_file: Path,
+        clang_args: Iterable[str] = (),
+        working_directory: Path | None = None,
     ) -> TranslationUnit:
         input_file = input_file.resolve()
         source = input_file.read_text(encoding="utf-8")
@@ -414,7 +417,13 @@ class ClangFrontend:
             *clang_args,
             str(input_file),
         ]
-        process = subprocess.run(command, text=True, capture_output=True, check=False)
+        process = subprocess.run(
+            command,
+            cwd=working_directory,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
         if process.returncode != 0:
             raise FrontendError(
                 process.stderr.strip() or f"clang exited with {process.returncode}"
