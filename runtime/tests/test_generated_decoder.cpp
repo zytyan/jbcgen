@@ -119,17 +119,17 @@ TEST_F(GeneratedDecoderTest, SemanticFailuresReleaseEarlierAllocations)
     }
 }
 
-TEST_F(GeneratedDecoderTest, RequiredEmptyArrayAndObjectDoNotAllocate)
+TEST_F(GeneratedDecoderTest, EmptyValuesOnlyAllocateRequiredState)
 {
     User user{};
     json_parser parser{};
     ASSERT_TRUE(decode(R"({"id":1,"age":18,"bases":[],"metadata":{}})", &user, &parser));
     EXPECT_EQ(user.bases, nullptr);
     EXPECT_EQ(user.basesLen, 0U);
-    EXPECT_EQ(tracked_allocations.allocation_count, 0U);
+    EXPECT_EQ(tracked_allocations.allocation_count, 1U);
     EXPECT_EQ(json_peek_token(&parser)->kind, JSON_TOKEN_EOF);
     releaseUser(&allocator, &user);
-    EXPECT_EQ(tracked_allocations.free_count, 0U);
+    EXPECT_EQ(tracked_allocations.free_count, 1U);
 }
 
 TEST_F(GeneratedDecoderTest, RequiredNullAndMissingAreDistinct)
@@ -138,13 +138,15 @@ TEST_F(GeneratedDecoderTest, RequiredNullAndMissingAreDistinct)
     json_parser parser{};
     EXPECT_FALSE(decode(R"({"id":1,"age":18,"bases":null,"metadata":{}})", &user, &parser));
     EXPECT_EQ(parser.error.code, JSON_ERROR_OTHER_NULL_REQUIRED_VALUE);
-    EXPECT_EQ(tracked_allocations.allocation_count, 0U);
+    EXPECT_EQ(tracked_allocations.allocation_count, 1U);
+    EXPECT_EQ(tracked_allocations.free_count, 1U);
 
     parser = {};
     user = {};
     EXPECT_FALSE(decode(R"({"id":1,"age":18,"bases":[]})", &user, &parser));
     EXPECT_EQ(parser.error.code, JSON_ERROR_OTHER_MISSING_REQUIRED_KEY);
-    EXPECT_EQ(tracked_allocations.allocation_count, 0U);
+    EXPECT_EQ(tracked_allocations.allocation_count, 2U);
+    EXPECT_EQ(tracked_allocations.free_count, 2U);
 }
 
 TEST_F(GeneratedDecoderTest, EscapedKeyUsesGeneratedDispatchMap)
@@ -154,8 +156,8 @@ TEST_F(GeneratedDecoderTest, EscapedKeyUsesGeneratedDispatchMap)
     ASSERT_TRUE(decode(R"({"\u0069d":1,"age":18,"bases":[],"metadata":{}})", &user, &parser));
     EXPECT_EQ(user.id, 1U);
     // The escaped key is temporarily owned, then released after dispatch.
-    EXPECT_EQ(tracked_allocations.allocation_count, 1U);
-    EXPECT_EQ(tracked_allocations.free_count, 1U);
+    EXPECT_EQ(tracked_allocations.allocation_count, 2U);
+    EXPECT_EQ(tracked_allocations.free_count, 2U);
     releaseUser(&allocator, &user);
 }
 
@@ -166,10 +168,11 @@ TEST_F(GeneratedDecoderTest, EmptyStringIsAllocatedAndCleanupIsRepeatable)
     ASSERT_TRUE(decode(R"({"id":1,"name":"","age":18,"bases":[],"metadata":{}})", &user, &parser));
     ASSERT_NE(user.name, nullptr);
     EXPECT_STREQ(user.name, "");
-    EXPECT_EQ(tracked_allocations.allocation_count, 1U);
-    releaseUser(&allocator, &user);
-    releaseUser(&allocator, &user);
+    EXPECT_EQ(tracked_allocations.allocation_count, 2U);
     EXPECT_EQ(tracked_allocations.free_count, 1U);
+    releaseUser(&allocator, &user);
+    releaseUser(&allocator, &user);
+    EXPECT_EQ(tracked_allocations.free_count, 2U);
     EXPECT_EQ(user.name, nullptr);
 }
 
@@ -186,9 +189,9 @@ TEST_F(GeneratedDecoderTest, DynamicArrayDecodesAndReleasesElements)
     EXPECT_STREQ(user.bases[0].name, "city");
     EXPECT_EQ(user.data.accessCnt, 3);
     EXPECT_EQ(user.data.lastAccess, 4);
-    EXPECT_EQ(tracked_allocations.allocation_count, 1U);
+    EXPECT_EQ(tracked_allocations.allocation_count, 2U);
     releaseUser(&allocator, &user);
-    EXPECT_EQ(tracked_allocations.free_count, 1U);
+    EXPECT_EQ(tracked_allocations.free_count, 2U);
 }
 
 TEST_F(GeneratedDecoderTest, DuplicateKeysUseLastValueWithoutLeaking)
@@ -201,8 +204,8 @@ TEST_F(GeneratedDecoderTest, DuplicateKeysUseLastValueWithoutLeaking)
     EXPECT_EQ(user.id, 2U);
     ASSERT_NE(user.name, nullptr);
     EXPECT_STREQ(user.name, "second");
-    EXPECT_EQ(tracked_allocations.allocation_count, 2U);
-    EXPECT_EQ(tracked_allocations.free_count, 1U);
+    EXPECT_EQ(tracked_allocations.allocation_count, 3U);
+    EXPECT_EQ(tracked_allocations.free_count, 2U);
     releaseUser(&allocator, &user);
     EXPECT_TRUE(tracked_allocations.clean());
 }
@@ -216,8 +219,8 @@ TEST_F(GeneratedDecoderTest, RangeFailureRollsBack)
         R"({"id":1,"bases":[{"id":7}],"age":17,"metadata":{}})",
         &user, &parser));
     EXPECT_EQ(parser.error.code, JSON_ERROR_RANGE_NUMBER);
-    EXPECT_EQ(tracked_allocations.allocation_count, 1U);
-    EXPECT_EQ(tracked_allocations.free_count, 1U);
+    EXPECT_EQ(tracked_allocations.allocation_count, 2U);
+    EXPECT_EQ(tracked_allocations.free_count, 2U);
     EXPECT_EQ(user.bases, nullptr);
     EXPECT_EQ(user.basesLen, 0U);
 }
@@ -313,7 +316,7 @@ TEST_F(GeneratedDecoderTest, ArrayRecordPointerNullAndRequiredRules)
     EXPECT_EQ(envelope.required->elems, nullptr);
     EXPECT_EQ(envelope.required->len, 0U);
     EXPECT_EQ(envelope.required->cap, 0U);
-    EXPECT_EQ(tracked_allocations.allocation_count, 1U);
+    EXPECT_EQ(tracked_allocations.allocation_count, 2U);
     releaseVecEnvelope(&allocator, &envelope);
     EXPECT_TRUE(tracked_allocations.clean());
 
@@ -323,14 +326,17 @@ TEST_F(GeneratedDecoderTest, ArrayRecordPointerNullAndRequiredRules)
     json_parser_init(&parser, &allocator, slice(R"({"required":null})"));
     EXPECT_FALSE(decodeVecEnvelope(&parser, &envelope));
     EXPECT_EQ(parser.error.code, JSON_ERROR_OTHER_NULL_REQUIRED_VALUE);
-    EXPECT_EQ(tracked_allocations.allocation_count, 0U);
+    EXPECT_EQ(tracked_allocations.allocation_count, 1U);
+    EXPECT_EQ(tracked_allocations.free_count, 1U);
 
     parser = {};
     envelope = {};
+    tracked_allocations.reset();
     json_parser_init(&parser, &allocator, slice("{}"));
     EXPECT_FALSE(decodeVecEnvelope(&parser, &envelope));
     EXPECT_EQ(parser.error.code, JSON_ERROR_OTHER_MISSING_REQUIRED_KEY);
-    EXPECT_EQ(tracked_allocations.allocation_count, 0U);
+    EXPECT_EQ(tracked_allocations.allocation_count, 1U);
+    EXPECT_EQ(tracked_allocations.free_count, 1U);
 }
 
 TEST_F(GeneratedDecoderTest, ArrayRecordElementFailureRollsBackCurrentSlot)

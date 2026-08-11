@@ -114,6 +114,7 @@ typedef struct {
 ## 解码与所有权
 
 - 调用 decode 前，输出对象必须全零；重复使用前先 cleanup。
+- 含 required 字段的对象通过 `json_allocator` 临时申请字段出现状态，并在所有成功或失败出口释放；不使用 VLA。
 - 未知字段跳过；重复已知字段采用最后一个值，覆盖前会先释放旧资源；缺失的非 required 字段保持零值。
 - required key 缺失与 required 值为 null 使用不同的结构化错误码。
 - 非 required 的 `char *`、动态数组和结构体指针接受 null，且不分配。

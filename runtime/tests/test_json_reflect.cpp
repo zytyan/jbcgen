@@ -161,8 +161,8 @@ TEST(JsonReflectTest, AliasAndDuplicateKeysUseLastValue)
     EXPECT_EQ(value.id, UINT64_C(9007199254740994));
     ASSERT_NE(value.name, nullptr);
     EXPECT_STREQ(value.name, "second");
-    EXPECT_EQ(tracked_allocations.allocation_count, 2U);
-    EXPECT_EQ(tracked_allocations.free_count, 1U);
+    EXPECT_EQ(tracked_allocations.allocation_count, 3U);
+    EXPECT_EQ(tracked_allocations.free_count, 2U);
     json_reflect_release(&allocator, &descriptors.root_type, &value);
     EXPECT_TRUE(tracked_allocations.clean());
 

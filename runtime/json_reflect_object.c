@@ -11,16 +11,17 @@ static bool decode_field(
 )
 {
     const json_reflect_field *field = &record->fields[entry->id];
-    provided[entry->id] = 1;
-    if ((field->flags & JSON_REFLECT_REQUIRED) != 0 &&
-        json_peek_token(parser)->kind == JSON_TOKEN_NULL) {
-        json_reflect_context_error(
-            parser,
-            JSON_ERROR_OTHER_NULL_REQUIRED_VALUE,
-            field->primary_key,
-            json_peek_token(parser)->location
-        );
-        return false;
+    if ((field->flags & JSON_REFLECT_REQUIRED) != 0) {
+        provided[entry->id] = 1;
+        if (json_peek_token(parser)->kind == JSON_TOKEN_NULL) {
+            json_reflect_context_error(
+                parser,
+                JSON_ERROR_OTHER_NULL_REQUIRED_VALUE,
+                field->primary_key,
+                json_peek_token(parser)->location
+            );
+            return false;
+        }
     }
     json_reflect_release_field(parser->allocator, field, out);
     void *count = field->count_type == NULL
@@ -34,6 +35,16 @@ static bool decode_field(
         count,
         field->count_type
     );
+}
+
+static bool has_required_fields(const json_reflect_record *record)
+{
+    for (size_t index = 0; index < record->field_count; ++index) {
+        if ((record->fields[index].flags & JSON_REFLECT_REQUIRED) != 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static bool decode_member(
@@ -83,19 +94,13 @@ static bool check_required(
     return true;
 }
 
-bool json_reflect_decode_object(
+static bool decode_object_contents(
     json_parser *parser,
-    const json_reflect_type *type,
+    const json_reflect_record *record,
+    unsigned char *provided,
     void *out
 )
 {
-    const json_reflect_record *record = type->record;
-    unsigned char provided[record->field_count == 0 ? 1 : record->field_count];
-    memset(provided, 0, sizeof(provided));
-    if (!json_object_begin(parser)) {
-        return false;
-    }
-
     json_source_location object_end = json_peek_token(parser)->location;
     if (json_peek_token(parser)->kind == JSON_TOKEN_RBRACE) {
         return json_object_try_end(parser) &&
@@ -118,4 +123,32 @@ bool json_reflect_decode_object(
         }
     }
     return check_required(parser, record, provided, object_end);
+}
+
+bool json_reflect_decode_object(
+    json_parser *parser,
+    const json_reflect_type *type,
+    void *out
+)
+{
+    const json_reflect_record *record = type->record;
+    if (!json_object_begin(parser)) {
+        return false;
+    }
+
+    unsigned char *provided = NULL;
+    if (has_required_fields(record)) {
+        provided = parser->allocator->malloc(record->field_count);
+        if (provided == NULL) {
+            json_reflect_no_memory(parser);
+            return false;
+        }
+        memset(provided, 0, record->field_count);
+    }
+
+    const bool result = decode_object_contents(parser, record, provided, out);
+    if (provided != NULL) {
+        parser->allocator->free(provided);
+    }
+    return result;
 }
