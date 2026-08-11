@@ -126,6 +126,7 @@ TEST_F(JsonPullTest, FormatsGeneratorErrors)
         {JSON_ERROR_OTHER_MISSING_REQUIRED_KEY, "missing required key: value"},
         {JSON_ERROR_OTHER_NULL_REQUIRED_VALUE, "required value is null: value"},
         {JSON_ERROR_OTHER_EMBEDDED_NUL, "C string contains embedded NUL"},
+        {JSON_ERROR_OTHER_ABI_MISMATCH, "json_reflect ABI mismatch"},
     };
     for (const auto &item : cases) {
         json_parser parser;
@@ -349,6 +350,7 @@ TEST_F(JsonPullTest, FormatsAllErrorKinds)
          "output buffer too small; need 9 bytes"},
         {JSON_ERROR_OTHER_NO_MEMORY, {}, "out of memory"},
         {JSON_ERROR_OTHER_INVALID_STATE, {}, "invalid parser state"},
+        {JSON_ERROR_OTHER_ABI_MISMATCH, {}, "json_reflect ABI mismatch"},
     };
 
     for (const auto &test : cases) {

@@ -146,6 +146,8 @@ static size_t error_body_len(const json_error *error) {
     return sizeof("C string contains embedded NUL") - 1;
   case JSON_ERROR_OTHER_INVALID_STATE:
     return sizeof("invalid parser state") - 1;
+  case JSON_ERROR_OTHER_ABI_MISMATCH:
+    return sizeof("json_reflect ABI mismatch") - 1;
   case JSON_ERROR_NONE:
     return 0;
   }
@@ -263,6 +265,10 @@ static void render_error(const json_parser *parser, char *dst,
   case JSON_ERROR_OTHER_INVALID_STATE:
     error_writer_append(&writer, "invalid parser state",
                         sizeof("invalid parser state") - 1);
+    break;
+  case JSON_ERROR_OTHER_ABI_MISMATCH:
+    error_writer_append(&writer, "json_reflect ABI mismatch",
+                        sizeof("json_reflect ABI mismatch") - 1);
     break;
   case JSON_ERROR_NONE:
     break;

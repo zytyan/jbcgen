@@ -51,6 +51,16 @@ endif()
 add_test(NAME json_reflect_basic_types_test COMMAND json_reflect_basic_types_test)
 
 if(UNIX AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    add_executable(json_reflect_abi_mismatch_test test_json_reflect_abi_mismatch.c)
+    target_link_libraries(json_reflect_abi_mismatch_test PRIVATE json_reflect_api)
+    target_compile_options(json_reflect_abi_mismatch_test PRIVATE
+        -fpack-struct=1
+        -funsigned-char
+    )
+    add_test(NAME json_reflect_abi_mismatch_test COMMAND json_reflect_abi_mismatch_test)
+endif()
+
+if(UNIX AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     add_executable(
         json_allocator_contract_test
         test_allocator_contract.c
@@ -81,6 +91,9 @@ endif()
 
 if(ENABLE_SANITIZERS)
     set(SANITIZER_TESTS json_reflect_tests json_reflect_basic_types_test)
+    if(TARGET json_reflect_abi_mismatch_test)
+        list(APPEND SANITIZER_TESTS json_reflect_abi_mismatch_test)
+    endif()
     if(TARGET json_allocator_contract_test)
         list(APPEND SANITIZER_TESTS json_allocator_contract_test)
     endif()

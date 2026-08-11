@@ -2,6 +2,22 @@
 
 #include <string.h>
 
+const unsigned char json_reflect_abi_v1 = 1;
+
+_Static_assert(sizeof(json_reflect_type) <= UINT16_MAX, "json_reflect_type is too large");
+
+bool json_reflect_abi_guard(const unsigned char *expected)
+{
+    return expected == &json_reflect_abi_v1;
+}
+
+bool json_reflect_type_abi_compatible(const json_reflect_type *type)
+{
+    return type != NULL && type->abi_version == JSON_REFLECT_ABI_VERSION &&
+           type->struct_size == sizeof(json_reflect_type) &&
+           type->abi_signature == JSON_REFLECT_ABI_SIGNATURE;
+}
+
 static bool check_pointer_target(
     json_parser *parser,
     const json_reflect_type *target
@@ -93,6 +109,10 @@ bool json_reflect_decode(
 )
 {
     if (parser == NULL || type == NULL || out == NULL) {
+        return false;
+    }
+    if (!json_reflect_type_abi_compatible(type)) {
+        json_set_error(parser, JSON_ERROR_OTHER_ABI_MISMATCH, NULL);
         return false;
     }
     if (json_reflect_decode_value(parser, type, NULL, out, NULL, NULL)) {

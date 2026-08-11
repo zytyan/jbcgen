@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "json_allocator.h"
 #include "json_error.h"
@@ -22,11 +23,13 @@ typedef struct json_string {
     size_t cap;
 } json_string;
 
-typedef enum json_cow_str_kind {
+typedef uint8_t json_cow_str_kind;
+
+enum {
     JSON_COW_OWNED_STRING,
     JSON_COW_MUT_BORROWED_STRING,
     JSON_COW_CONST_BORROWED_SLICE,
-} json_cow_str_kind;
+};
 
 typedef struct json_cow_str {
     union {

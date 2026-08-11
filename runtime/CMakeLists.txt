@@ -44,6 +44,10 @@ add_library(json_reflect_api
     json_tokenizer.c
 )
 target_include_directories(json_reflect_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(json_reflect_api PROPERTIES
+    VERSION 1.0.0
+    SOVERSION 1
+)
 
 include(CTest)
 if(BUILD_TESTING)

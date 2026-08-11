@@ -47,6 +47,10 @@ bool $function(json_parser *parser, $output_type out)
         }
         return false;
     }
+    if (!json_reflect_abi_guard(&json_reflect_abi_v1)) {
+        json_set_error(parser, JSON_ERROR_OTHER_ABI_MISMATCH, NULL);
+        return false;
+    }
     memset(out, 0, sizeof(*out));
     return json_reflect_decode(parser, &$descriptor, out);
 }
@@ -56,6 +60,9 @@ PUBLIC_CLEANUP = r"""
 void $function(json_allocator *allocator, $output_type out)
 {
     if (allocator == NULL || out == NULL) {
+        return;
+    }
+    if (!json_reflect_abi_guard(&json_reflect_abi_v1)) {
         return;
     }
     json_reflect_release(allocator, &$descriptor, out);

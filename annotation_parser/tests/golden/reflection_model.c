@@ -23,6 +23,7 @@ static const json_reflect_record jbc_record_Child;
 static const json_reflect_record jbc_record_Root;
 
 static const json_reflect_type jbc_type_dynamic_array_record_Child = {
+    JSON_REFLECT_TYPE_ABI_INIT,
     .kind = JSON_REFLECT_DYNAMIC_ARRAY,
     .basic_id = JSON_REFLECT_BASIC_ID_NONE,
     .bits = 0,
@@ -34,6 +35,7 @@ static const json_reflect_type jbc_type_dynamic_array_record_Child = {
 };
 
 static const json_reflect_type jbc_type_enum_Kind = {
+    JSON_REFLECT_TYPE_ABI_INIT,
     .kind = JSON_REFLECT_ENUM,
     .basic_id = JSON_REFLECT_BASIC_ID((Kind){0}),
     .bits = sizeof(Kind) * CHAR_BIT,
@@ -45,6 +47,7 @@ static const json_reflect_type jbc_type_enum_Kind = {
 };
 
 static const json_reflect_type jbc_type_fixed_array_3_basic_int = {
+    JSON_REFLECT_TYPE_ABI_INIT,
     .kind = JSON_REFLECT_FIXED_ARRAY,
     .basic_id = JSON_REFLECT_BASIC_ID_NONE,
     .bits = 0,
@@ -56,6 +59,7 @@ static const json_reflect_type jbc_type_fixed_array_3_basic_int = {
 };
 
 static const json_reflect_type jbc_type_pointer_record_Child = {
+    JSON_REFLECT_TYPE_ABI_INIT,
     .kind = JSON_REFLECT_POINTER,
     .basic_id = JSON_REFLECT_BASIC_ID_NONE,
     .bits = 0,
@@ -67,6 +71,7 @@ static const json_reflect_type jbc_type_pointer_record_Child = {
 };
 
 static const json_reflect_type jbc_type_string_fixed_16 = {
+    JSON_REFLECT_TYPE_ABI_INIT,
     .kind = JSON_REFLECT_STRING,
     .basic_id = JSON_REFLECT_BASIC_ID_NONE,
     .bits = 0,
@@ -78,6 +83,7 @@ static const json_reflect_type jbc_type_string_fixed_16 = {
 };
 
 static const json_reflect_type jbc_type_string_pointer = {
+    JSON_REFLECT_TYPE_ABI_INIT,
     .kind = JSON_REFLECT_STRING,
     .basic_id = JSON_REFLECT_BASIC_ID_NONE,
     .bits = 0,
@@ -122,6 +128,7 @@ static const json_reflect_record jbc_record_Child = {
     .array = NULL,
 };
 static const json_reflect_type jbc_type_Child = {
+    JSON_REFLECT_TYPE_ABI_INIT,
     .kind = JSON_REFLECT_RECORD,
     .basic_id = JSON_REFLECT_BASIC_ID_NONE,
     .bits = 0,
@@ -244,6 +251,7 @@ static const json_reflect_record jbc_record_Root = {
     .array = NULL,
 };
 static const json_reflect_type jbc_type_Root = {
+    JSON_REFLECT_TYPE_ABI_INIT,
     .kind = JSON_REFLECT_RECORD,
     .basic_id = JSON_REFLECT_BASIC_ID_NONE,
     .bits = 0,
@@ -259,6 +267,9 @@ void releaseRoot(json_allocator *allocator, Root * out)
     if (allocator == NULL || out == NULL) {
         return;
     }
+    if (!json_reflect_abi_guard(&json_reflect_abi_v1)) {
+        return;
+    }
     json_reflect_release(allocator, &jbc_type_Root, out);
 }
 
@@ -268,6 +279,10 @@ bool decodeRoot(json_parser *parser, Root * out)
         if (parser != NULL) {
             json_set_error(parser, JSON_ERROR_OTHER_INVALID_STATE, NULL);
         }
+        return false;
+    }
+    if (!json_reflect_abi_guard(&json_reflect_abi_v1)) {
+        json_set_error(parser, JSON_ERROR_OTHER_ABI_MISMATCH, NULL);
         return false;
     }
     memset(out, 0, sizeof(*out));

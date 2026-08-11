@@ -2,6 +2,7 @@
 #define JSON_ERROR_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -9,7 +10,9 @@ extern "C" {
 
 typedef struct json_parser json_parser;
 
-typedef enum {
+typedef uint8_t json_token_kind;
+
+enum {
     JSON_TOKEN_UNKNOWN = 0,
     JSON_TOKEN_ERROR,
     JSON_TOKEN_EOF,
@@ -26,9 +29,11 @@ typedef enum {
     JSON_TOKEN_RBRACE,
     JSON_TOKEN_COLON,
     JSON_TOKEN_COMMA,
-} json_token_kind;
+};
 
-typedef enum {
+typedef uint8_t json_error_code;
+
+enum {
     JSON_ERROR_NONE = 0,
 
     JSON_ERROR_SYNTAX_UNKNOWN_CHARACTER,
@@ -56,9 +61,12 @@ typedef enum {
     JSON_ERROR_OTHER_NULL_REQUIRED_VALUE,
     JSON_ERROR_OTHER_EMBEDDED_NUL,
     JSON_ERROR_OTHER_INVALID_STATE,
-} json_error_code;
+    JSON_ERROR_OTHER_ABI_MISMATCH,
+};
 
-typedef enum {
+typedef uint8_t json_expected_type;
+
+enum {
     JSON_EXPECTED_UNKNOWN = 0,
     JSON_EXPECTED_NULL,
     JSON_EXPECTED_BOOL,
@@ -68,9 +76,11 @@ typedef enum {
     JSON_EXPECTED_ARRAY,
     JSON_EXPECTED_OBJECT,
     JSON_EXPECTED_VALUE,
-} json_expected_type;
+};
 
-typedef enum {
+typedef uint8_t json_range_target;
+
+enum {
     JSON_RANGE_UNKNOWN = 0,
     JSON_RANGE_NUMBER_VALUE,
     JSON_RANGE_NUMBER_LENGTH,
@@ -78,7 +88,7 @@ typedef enum {
     JSON_RANGE_ARRAY_LENGTH,
     JSON_RANGE_DEPTH,
     JSON_RANGE_OUTPUT_BUFFER,
-} json_range_target;
+};
 
 typedef struct {
     const char *begin;

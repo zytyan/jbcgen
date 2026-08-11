@@ -39,6 +39,8 @@ C generator 使用 5 个固定完整模板，生成 `static const` 类型、reco
 
 Runtime 的标量便利函数按基本类型命名：`json_decode_bool`、`json_decode_char`、`json_decode_signed_char`、`json_decode_unsigned_char`、`json_decode_short`、`json_decode_unsigned_short`、`json_decode_int`、`json_decode_unsigned_int`、`json_decode_long`、`json_decode_unsigned_long`、`json_decode_long_long`、`json_decode_unsigned_long_long`、`json_decode_float` 和 `json_decode_double`。旧的按位宽函数不再提供。
 
+生成的每个类型描述符都带有 ABI 版本、`sizeof(json_reflect_type)` 和编译环境指纹，并通过公开 wrapper 引用 `json_reflect_abi_v1`。指纹覆盖 reflection、parser、error、string 和 key-map 公开结构布局以及 plain `char` signedness；runtime 会在解码前拒绝不兼容描述符。共享库 SONAME 主版本为 `1`。生成目标必须与 runtime 和实际使用用户结构体的目标共享 packing、char signedness、target ABI 和控制结构体定义的宏；这些选项不一致属于不支持的构建。
+
 ## CLI
 
 ```text
