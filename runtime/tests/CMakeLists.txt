@@ -14,16 +14,20 @@ set(JSON_REFLECT_TEST_SOURCES
         test_json_str_slice.cpp
         test_generated_decoder.cpp
         tracking_allocator.cpp
-        ${GENERATED_SOURCE}
 )
-
-set_source_files_properties(${GENERATED_SOURCE} PROPERTIES GENERATED TRUE)
 
 add_executable(
     json_reflect_tests
     ${JSON_REFLECT_TEST_SOURCES}
 )
-add_dependencies(json_reflect_tests generate_example_json)
+
+json_reflect_generate(
+    TARGET json_reflect_tests
+    HEADER "${JBCGEN_ROOT}/example/example.h"
+    OUTPUT "${GENERATED_SOURCE}"
+    INCLUDE "example/example.h"
+    CLANG_ARGS -I "${CMAKE_CURRENT_SOURCE_DIR}/.."
+)
 
 target_link_libraries(
     json_reflect_tests
@@ -70,7 +74,6 @@ if(UNIX AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         test_allocator_contract.c
         ${GENERATED_SOURCE}
     )
-    add_dependencies(json_allocator_contract_test generate_example_json)
     target_link_libraries(json_allocator_contract_test PRIVATE json_reflect_api)
     target_include_directories(json_allocator_contract_test PRIVATE
         ${GENERATED_DIR}

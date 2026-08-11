@@ -65,6 +65,8 @@ PYTHONPATH=src python3 -m annotation_parser ../example/example.h \
 
 生成的 `.c` 文件需要与输入头文件一起编译，并链接仓库 `runtime` 提供的 CMake 目标 `json_reflect_api`。推荐在项目中开启 `CMAKE_EXPORT_COMPILE_COMMANDS`，通过 `add_custom_command(OUTPUT ...)` 调用 generator，并把输入头文件和 `annotation_parser/src/annotation_parser/*.py` 都列入 `DEPENDS`。
 
+`add_subdirectory(runtime)` 还会提供可选的 `json_reflect_generate(TARGET ... HEADER ... OUTPUT ...)` helper。它自动注册生成命令、把输出加入目标并链接 `json_reflect_api`；不调用时不会改变原有集成方式。可选参数包括 `INCLUDE`、`COMPILE_COMMANDS`、`NO_COMPILE_COMMANDS`、`ANNOTATION_PARSER`、`CLANG`、`CLANG_ARGS` 和 `DEPENDS`。
+
 完整、可直接复制的 CMake 示例以及运行期调用示例见仓库根目录 [README.md](../README.md#集成已有-cmake-项目)。
 
 ## 注解

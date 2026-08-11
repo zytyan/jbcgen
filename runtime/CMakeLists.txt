@@ -58,6 +58,8 @@ set_target_properties(json_reflect_api PROPERTIES
     SOVERSION 1
 )
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/JsonReflectGenerate.cmake)
+
 if(JSON_REFLECT_BUILD_TESTS)
     enable_language(CXX)
     set(CMAKE_CXX_STANDARD 17)
@@ -67,32 +69,10 @@ if(JSON_REFLECT_BUILD_TESTS)
         message(FATAL_ERROR "JSON_REFLECT_ENABLE_SANITIZERS requires GCC or Clang")
     endif()
     find_package(GTest REQUIRED)
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
     set(JBCGEN_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/..)
     set(GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
     set(GENERATED_SOURCE ${GENERATED_DIR}/example_json.c)
-    file(GLOB_RECURSE ANNOTATION_PARSER_SOURCES CONFIGURE_DEPENDS
-        ${JBCGEN_ROOT}/annotation_parser/src/annotation_parser/*.py
-    )
-    add_custom_command(
-        OUTPUT ${GENERATED_SOURCE}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${GENERATED_DIR}
-        COMMAND ${CMAKE_COMMAND} -E env
-            PYTHONPATH=${JBCGEN_ROOT}/annotation_parser/src
-            ${Python3_EXECUTABLE} -m annotation_parser
-            ${JBCGEN_ROOT}/example/example.h
-            -o ${GENERATED_SOURCE}
-            --include example/example.h
-            -- -I ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS
-            ${JBCGEN_ROOT}/example/example.h
-            ${ANNOTATION_PARSER_SOURCES}
-        WORKING_DIRECTORY ${JBCGEN_ROOT}
-        VERBATIM
-    )
-    set_source_files_properties(${GENERATED_SOURCE} PROPERTIES GENERATED TRUE)
-    add_custom_target(generate_example_json DEPENDS ${GENERATED_SOURCE})
     enable_testing()
     add_subdirectory(tests)
 endif()

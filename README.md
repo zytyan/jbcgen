@@ -259,7 +259,61 @@ target_link_libraries(your_target PRIVATE json_reflect_api)
 链接 `json_reflect_api` 会通过 `PUBLIC` include directory 自动提供 runtime 头文件。
 生成器可以单独安装，也可以保留完整 jbcgen 仓库并按下面的例子从源码调用。
 
-以下示例假设仓库布局为：
+### 使用 CMake helper
+
+`add_subdirectory` 会新增 `json_reflect_generate()`，但不会自动修改任何已有目标。
+目标必须先创建，再调用 helper：
+
+```cmake
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+add_subdirectory(third_party/jbcgen/runtime)
+
+add_library(my_project_json STATIC)
+target_include_directories(my_project_json PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+json_reflect_generate(
+    TARGET my_project_json
+    HEADER "include/my_project/user.h"
+    OUTPUT "generated/user_json.c"
+    INCLUDE "my_project/user.h"
+)
+```
+
+helper 会创建生成命令、把输出 `.c` 加入 `my_project_json`，并让该目标链接
+`json_reflect_api`。`HEADER` 相对调用处的源码目录解析，`OUTPUT` 相对调用处的
+构建目录解析。默认从 `${CMAKE_BINARY_DIR}/compile_commands.json` 提取编译参数；
+可以用 `COMPILE_COMMANDS` 指定其他文件或目录。
+
+完整仓库布局下，helper 使用仓库内匹配版本的 Python generator；只复制 runtime
+时，它会查找已安装的 `annotation-parser`。也可以显式指定：
+
+```cmake
+json_reflect_generate(
+    TARGET my_project_json
+    HEADER "include/my_project/user.h"
+    OUTPUT "generated/user_json.c"
+    INCLUDE "my_project/user.h"
+    COMPILE_COMMANDS "${CMAKE_BINARY_DIR}"
+    ANNOTATION_PARSER "/opt/jbcgen/bin/annotation-parser"
+    CLANG "/opt/llvm/bin/clang"
+    CLANG_ARGS -DMY_EXTRA_DEFINE=1
+    DEPENDS "include/my_project/config.h"
+)
+```
+
+`INCLUDE` 是写入生成 `.c` 的头文件拼写；省略时使用 `HEADER` 的绝对路径。
+`CLANG_ARGS` 追加在 compilation database 参数之后，`DEPENDS` 可声明影响 AST 的
+额外文件。不使用 compilation database 时可指定 `NO_COMPILE_COMMANDS`，并通过
+`CLANG_ARGS` 完整提供 include、宏和 target 参数。没有安装 generator 且只复制了
+runtime 时，helper 会在 CMake 配置期给出错误；不调用 helper 则完全不需要 Python
+或 generator。
+
+### 手写生成命令
+
+原有的 `add_custom_command` 集成方式仍然可用。以下示例假设仓库布局为：
 
 ```text
 your-project/
