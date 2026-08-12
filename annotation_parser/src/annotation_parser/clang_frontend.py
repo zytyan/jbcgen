@@ -319,14 +319,17 @@ def _walk(node: dict[str, Any]) -> Iterable[dict[str, Any]]:
             yield from _walk(child)
 
 
-def _location(node: dict[str, Any], default_file: Path) -> SourceLocation:
+def _location(node: dict[str, Any], source_file: Path, source: bytes) -> SourceLocation:
     loc = node.get("loc", {})
     if not loc:
         loc = node.get("range", {}).get("begin", {})
+    offset = int(loc.get("offset", 0))
+    line = int(loc.get("line") or _line_number(source, offset))
+    line_start = source.rfind(b"\n", 0, offset) + 1
     return SourceLocation(
-        str(Path(loc.get("file", default_file))),
-        int(loc.get("line", 0)),
-        int(loc.get("col", 0)),
+        str(source_file),
+        line,
+        int(loc.get("col") or offset - line_start + 1),
     )
 
 
@@ -449,6 +452,74 @@ def _scan_source_comments(
     return tuple(grouped)
 
 
+class _SourceFiles:
+    def __init__(self, input_file: Path, input_source: bytes, base_directory: Path):
+        self.base_directory = base_directory
+        self._sources = {input_file.resolve(): input_source}
+        self._comments: dict[Path, tuple[_SourceComment, ...]] = {}
+
+    def resolve(self, file_name: str) -> Path:
+        path = Path(file_name)
+        if not path.is_absolute():
+            path = self.base_directory / path
+        return path.resolve()
+
+    def source(self, source_file: Path) -> bytes:
+        source_file = source_file.resolve()
+        if source_file not in self._sources:
+            try:
+                source = source_file.read_bytes()
+            except OSError as error:
+                raise FrontendError(
+                    f"cannot read source file {source_file}: {error}"
+                ) from error
+            try:
+                source.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise FrontendError(
+                    f"source file is not valid UTF-8: {source_file}: {error}"
+                ) from error
+            self._sources[source_file] = source
+        return self._sources[source_file]
+
+    def comments(self, source_file: Path) -> tuple[_SourceComment, ...]:
+        source_file = source_file.resolve()
+        if source_file not in self._comments:
+            self._comments[source_file] = _scan_source_comments(
+                self.source(source_file), source_file
+            )
+        return self._comments[source_file]
+
+
+def _node_file_name(node: dict[str, Any]) -> str | None:
+    loc = node.get("loc", {})
+    source_range = node.get("range", {})
+    return loc.get("file") or source_range.get("begin", {}).get("file")
+
+
+def _source_file_map(
+    root: dict[str, Any], input_file: Path, sources: _SourceFiles
+) -> dict[int, Path]:
+    result: dict[int, Path] = {}
+
+    def visit(node: dict[str, Any], inherited_file: Path) -> None:
+        file_name = _node_file_name(node)
+        source_file = sources.resolve(file_name) if file_name else inherited_file
+        result[id(node)] = source_file
+        current_file = source_file
+        for child in node.get("inner", ()):
+            child_file_name = _node_file_name(child)
+            child_file = (
+                sources.resolve(child_file_name) if child_file_name else current_file
+            )
+            visit(child, child_file)
+            if child_file_name:
+                current_file = child_file
+
+    visit(root, input_file.resolve())
+    return result
+
+
 def _node_line_range(node: dict[str, Any], source: bytes) -> tuple[int, int, int]:
     source_range = node.get("range", {})
     begin = source_range.get("begin", {})
@@ -460,31 +531,13 @@ def _node_line_range(node: dict[str, Any], source: bytes) -> tuple[int, int, int
     return begin_line, end_line, end_offset
 
 
-def _belongs_to_default_source(
-    node: dict[str, Any], default_file: Path, source: bytes
-) -> bool:
-    loc = node.get("loc", {})
-    if loc.get("file") is not None:
-        return Path(loc["file"]).resolve() == default_file.resolve()
-    offset = loc.get("offset")
-    token_length = int(loc.get("tokLen", 0))
-    node_name = node.get("name", "")
-    return (
-        offset is not None
-        and bool(node_name)
-        and source[int(offset) : int(offset) + token_length].decode("utf-8")
-        == node_name
-    )
-
-
 def _node_annotations(
     node: dict[str, Any],
-    default_file: Path,
-    source: bytes,
-    comments: tuple[_SourceComment, ...],
+    source_file: Path,
+    sources: _SourceFiles,
 ) -> tuple[Annotation, ...]:
-    if not _belongs_to_default_source(node, default_file, source):
-        return ()
+    source = sources.source(source_file)
+    comments = sources.comments(source_file)
     begin_line, end_line, end_offset = _node_line_range(node, source)
     leading = [
         comment
@@ -551,14 +604,23 @@ class ClangFrontend:
             root = json.loads(process.stdout)
         except json.JSONDecodeError as error:
             raise FrontendError(f"clang produced invalid JSON AST: {error}") from error
-        return self.from_json(root, input_file, source)
+        base_directory = (
+            working_directory.resolve() if working_directory else Path.cwd().resolve()
+        )
+        return self.from_json(root, input_file, source, base_directory)
 
     def from_json(
-        self, root: dict[str, Any], input_file: Path, source: bytes | str
+        self,
+        root: dict[str, Any],
+        input_file: Path,
+        source: bytes | str,
+        base_directory: Path | None = None,
     ) -> TranslationUnit:
         if isinstance(source, str):
             source = source.encode("utf-8")
-        comments = _scan_source_comments(source, input_file)
+        input_file = input_file.resolve()
+        sources = _SourceFiles(input_file, source, base_directory or input_file.parent)
+        node_files = _source_file_map(root, input_file, sources)
         records: list[AstRecord] = []
         typedefs: list[AstTypedef] = []
         enums: list[AstEnum] = []
@@ -601,6 +663,7 @@ class ClangFrontend:
         type_parser = CTypeParser(record_names, enum_types, typedef_specs)
 
         for node in _walk(root):
+            source_file = node_files[id(node)]
             node_id = node.get("id", "")
             kind = node.get("kind")
             if not node_id or node_id in seen:
@@ -626,14 +689,21 @@ class ClangFrontend:
                                 type_info.get("qualType", ""),
                                 type_info.get("desugaredQualType"),
                             ),
-                            _node_annotations(child, input_file, source, comments),
-                            _location(child, input_file),
+                            _node_annotations(
+                                child, node_files.get(id(child), source_file), sources
+                            ),
+                            _location(
+                                child,
+                                node_files.get(id(child), source_file),
+                                sources.source(node_files.get(id(child), source_file)),
+                            ),
                         )
                     )
-                annotations = _node_annotations(node, input_file, source, comments)
+                annotations = _node_annotations(node, source_file, sources)
                 if not annotations and typedef_info is not None:
+                    typedef_file = node_files[id(typedef_info[1])]
                     annotations = _node_annotations(
-                        typedef_info[1], input_file, source, comments
+                        typedef_info[1], typedef_file, sources
                     )
                 records.append(
                     AstRecord(
@@ -641,7 +711,7 @@ class ClangFrontend:
                         record_name,
                         tuple(fields),
                         annotations,
-                        _location(node, input_file),
+                        _location(node, source_file, sources.source(source_file)),
                         f"struct {tag_name}" if tag_name else typedef_name,
                     )
                 )
@@ -656,7 +726,7 @@ class ClangFrontend:
                             type_info.get("qualType", ""),
                             type_info.get("desugaredQualType"),
                         ),
-                        _location(node, input_file),
+                        _location(node, source_file, sources.source(source_file)),
                     )
                 )
             elif kind == "EnumDecl" and node.get("name"):
@@ -674,13 +744,11 @@ class ClangFrontend:
                             if child.get("kind") == "EnumConstantDecl"
                             and child.get("name")
                         ),
-                        _location(node, input_file),
+                        _location(node, source_file, sources.source(source_file)),
                     )
                 )
             elif kind == "FunctionDecl" and node.get("name"):
-                if not _belongs_to_default_source(node, input_file, source):
-                    continue
-                annotations = _node_annotations(node, input_file, source, comments)
+                annotations = _node_annotations(node, source_file, sources)
                 if not annotations:
                     continue
                 seen.add(node_id)
@@ -714,7 +782,7 @@ class ClangFrontend:
                         type_parser.parse(return_spelling, return_desugared),
                         tuple(parameters),
                         annotations,
-                        _location(node, input_file),
+                        _location(node, source_file, sources.source(source_file)),
                     )
                 )
         return TranslationUnit(

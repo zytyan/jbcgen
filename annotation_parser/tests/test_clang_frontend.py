@@ -237,6 +237,47 @@ class ClangFrontendTest(unittest.TestCase):
             [annotation.name for annotation in record.annotations], ["jsonStruct"]
         )
 
+    def test_reads_annotations_from_included_header_source(self) -> None:
+        included_source = textwrap.dedent(
+            """
+            #include <stdbool.h>
+            typedef struct json_parser json_parser;
+            typedef struct json_allocator json_allocator;
+
+            /// @jsonStruct
+            typedef struct IncludedItem {
+              int identifier; /// @json(key=id, required)
+            } IncludedItem;
+
+            /// @jsonDecode
+            bool decodeIncluded(json_parser *parser, IncludedItem *item);
+            /// @jsonCleanup
+            void cleanupIncluded(json_allocator *allocator, IncludedItem *item);
+            """
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            included = root / "included.h"
+            entry = root / "entry.h"
+            included.write_text(included_source, encoding="utf-8")
+            entry.write_text('#include "included.h"\n', encoding="utf-8")
+            unit = ClangFrontend().parse(entry)
+
+        record = next(item for item in unit.records if item.name == "IncludedItem")
+        field = next(item for item in record.fields if item.name == "identifier")
+        self.assertEqual(record.annotations[0].name, "jsonStruct")
+        self.assertEqual(field.annotations[0].values("key"), ("id",))
+        self.assertEqual(field.annotations[0].values("required"), (None,))
+        self.assertEqual(Path(record.location.file), included)
+        self.assertEqual(Path(field.annotations[0].location.file), included)
+        self.assertEqual(
+            {function.name for function in unit.functions},
+            {"decodeIncluded", "cleanupIncluded"},
+        )
+        self.assertTrue(
+            all(Path(function.location.file) == included for function in unit.functions)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
