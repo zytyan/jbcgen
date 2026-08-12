@@ -1,0 +1,144 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "jbcgen Annotations",
+  "scopeName": "jbcgen.annotations.injection",
+  "injectionSelector": "L:source.c, L:source.cpp",
+  "patterns": [
+    {
+      "include": "#line-documentation"
+    },
+    {
+      "include": "#block-documentation"
+    }
+  ],
+  "repository": {
+    "line-documentation": {
+      "begin": "(?=///|//!)",
+      "end": "$",
+      "contentName": "comment.line.documentation.jbcgen",
+      "patterns": [
+        {
+          "include": "#annotation"
+        },
+        {
+          "include": "#annotation-arguments"
+        }
+      ]
+    },
+    "block-documentation": {
+      "begin": "(?=/\\*\\*|/\\*!)",
+      "end": "\\*/",
+      "contentName": "comment.block.documentation.jbcgen",
+      "patterns": [
+        {
+          "include": "#annotation"
+        },
+        {
+          "include": "#annotation-arguments"
+        }
+      ]
+    },
+    "annotation": {
+      "match": "(@)(jsonStruct|jsonDecode|jsonCleanup|jsonEnum|json)\\b",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.annotation.jbcgen"
+        },
+        "2": {
+          "name": "entity.name.function.annotation.jbcgen"
+        }
+      }
+    },
+    "annotation-arguments": {
+      "patterns": [
+        {
+          "match": "\\b(asarray|required|flatten|omitempty)\\b",
+          "name": "storage.modifier.annotation.jbcgen"
+        },
+        {
+          "match": "\\b(key|altkey|type|len|elems|cap|min|max|minlen|maxlen|name)\\b(?=\\s*=)",
+          "name": "variable.parameter.annotation.jbcgen"
+        },
+        {
+          "match": "=",
+          "name": "keyword.operator.assignment.annotation.jbcgen"
+        },
+        {
+          "match": ",",
+          "name": "punctuation.separator.comma.annotation.jbcgen"
+        },
+        {
+          "match": "[()]",
+          "name": "punctuation.definition.parameters.annotation.jbcgen"
+        },
+        {
+          "begin": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.annotation.jbcgen"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.annotation.jbcgen"
+            }
+          },
+          "name": "string.quoted.double.annotation.jbcgen",
+          "patterns": [
+            {
+              "match": "\\\\.",
+              "name": "constant.character.escape.annotation.jbcgen"
+            }
+          ]
+        },
+        {
+          "begin": "'",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.annotation.jbcgen"
+            }
+          },
+          "end": "'",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.annotation.jbcgen"
+            }
+          },
+          "name": "string.quoted.single.annotation.jbcgen",
+          "patterns": [
+            {
+              "match": "\\\\.",
+              "name": "constant.character.escape.annotation.jbcgen"
+            }
+          ]
+        },
+        {
+          "begin": "`",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.annotation.jbcgen"
+            }
+          },
+          "end": "`",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.annotation.jbcgen"
+            }
+          },
+          "name": "string.quoted.other.annotation.jbcgen",
+          "patterns": [
+            {
+              "match": "\\\\.",
+              "name": "constant.character.escape.annotation.jbcgen"
+            }
+          ]
+        },
+        {
+          "match": "(?<==)\\s*[^,()\\s*]+",
+          "name": "string.unquoted.annotation.jbcgen"
+        }
+      ]
+    }
+  }
+}

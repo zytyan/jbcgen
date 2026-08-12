@@ -1,0 +1,35 @@
+{
+  "name": "jbcgen-annotations",
+  "displayName": "jbcgen Annotations",
+  "description": "Syntax highlighting for jbcgen JSON annotations in C and C++ documentation comments.",
+  "version": "0.1.0",
+  "publisher": "zytyan",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zytyan/jbcgen.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "c",
+    "cpp",
+    "json",
+    "jbcgen"
+  ],
+  "contributes": {
+    "grammars": [
+      {
+        "scopeName": "jbcgen.annotations.injection",
+        "path": "./syntaxes/jbcgen-annotations.tmLanguage.json",
+        "injectTo": [
+          "source.c",
+          "source.cpp"
+        ]
+      }
+    ]
+  }
+}

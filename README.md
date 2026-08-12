@@ -195,6 +195,10 @@ Compilation database 的行为：
 
 动态数组的伴随长度字段只存储元素数，不会作为独立 JSON key 解码。
 
+### VS Code 高亮
+
+仓库的 `vscode-extension` 目录包含一个无运行时依赖的 TextMate 扩展，用于高亮 C/C++ 文档注释中的注解名、参数、flag 和值。它只负责着色，不会运行 Python、Clang 或生成器；本地打包与安装方式见该目录的 README。
+
 ### 数组容器结构体
 
 ```c

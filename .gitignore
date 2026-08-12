@@ -2,3 +2,4 @@ __pycache__
 /runtime/build
 /runtime/.cache
 /annotation_parser/example_json.c
+/vscode-extension/*.vsix
