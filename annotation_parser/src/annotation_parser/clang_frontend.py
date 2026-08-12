@@ -341,14 +341,13 @@ class _SourceComment:
     trailing: bool
 
 
-def _line_number(source: str, offset: int) -> int:
-    return source.encode("utf-8").count(b"\n", 0, offset) + 1
+def _line_number(source: bytes, offset: int) -> int:
+    return source.count(b"\n", 0, offset) + 1
 
 
-def _line_end(source: str, offset: int) -> int:
-    source_bytes = source.encode("utf-8")
-    end = source_bytes.find(b"\n", offset)
-    return len(source_bytes) if end < 0 else end
+def _line_end(source: bytes, offset: int) -> int:
+    end = source.find(b"\n", offset)
+    return len(source) if end < 0 else end
 
 
 def _strip_document_comment(text: str) -> str:
@@ -368,130 +367,89 @@ def _strip_document_comment(text: str) -> str:
     return "\n".join(result)
 
 
-def _source_comment(
-    node: dict[str, Any], default_file: Path, source: str
-) -> _SourceComment | None:
-    source_range = node.get("range", {})
-    begin = source_range.get("begin", {})
-    end = source_range.get("end", {})
-    if begin.get("includedFrom") or end.get("includedFrom"):
-        return None
-    begin_offset = begin.get("offset")
-    end_offset = end.get("offset")
-    if begin_offset is None or end_offset is None:
-        return None
-    source_bytes = source.encode("utf-8")
-    content_begin = int(begin_offset)
-    content_end = int(end_offset) + max(int(end.get("tokLen", 0)), 1)
-    if not (0 <= content_begin <= content_end <= len(source_bytes)):
-        return None
-
-    begin_line_start = source_bytes.rfind(b"\n", 0, content_begin) + 1
-    prefix = source_bytes[begin_line_start:content_begin]
-    trailing = False
-    block_start = source_bytes.rfind(b"/**", 0, content_begin + 1)
-    block_close_before = source_bytes.rfind(b"*/", 0, content_begin + 1)
-    block_start_inside = source_bytes.rfind(b"/**", content_begin, content_end + 1)
-    if block_start_inside >= 0:
-        block_start = block_start_inside
-    if (
-        block_start_inside >= 0
-        or block_start >= begin_line_start
-        or block_start > block_close_before
-    ):
-        start_offset = block_start
-        close = source_bytes.find(b"*/", content_end)
-        if close < 0:
-            return None
-        end_offset_exclusive = close + 2
-    elif b"///" in prefix or b"//!" in prefix:
-        marker_offsets = [
-            begin_line_start + position
-            for marker in (b"///", b"//!")
-            if (position := prefix.rfind(marker)) >= 0
-        ]
-        start_offset = max(marker_offsets)
-        trailing = bool(source_bytes[begin_line_start:start_offset].strip())
-        end_offset_exclusive = (
-            _line_end(source, content_begin)
-            if trailing
-            else _line_end(source, content_end)
-        )
-    else:
-        return None
-
-    start_line = _line_number(source, start_offset)
-    end_line = _line_number(source, max(start_offset, end_offset_exclusive - 1))
-    column = start_offset - (source_bytes.rfind(b"\n", 0, start_offset) + 1) + 1
+def _make_source_comment(
+    source: bytes, default_file: Path, start: int, end: int, trailing: bool
+) -> _SourceComment:
+    start_line = _line_number(source, start)
+    end_line = _line_number(source, max(start, end - 1))
+    line_start = source.rfind(b"\n", 0, start) + 1
     return _SourceComment(
-        start_offset,
-        end_offset_exclusive,
+        start,
+        end,
         start_line,
         end_line,
-        _strip_document_comment(
-            source_bytes[start_offset:end_offset_exclusive].decode("utf-8")
-        ),
-        SourceLocation(str(default_file), start_line, column),
+        _strip_document_comment(source[start:end].decode("utf-8")),
+        SourceLocation(str(default_file), start_line, start - line_start + 1),
         trailing,
     )
 
 
-def _source_comments(
-    root: dict[str, Any], default_file: Path, source: str
+def _scan_source_comments(
+    source: bytes, default_file: Path
 ) -> tuple[_SourceComment, ...]:
-    by_range: dict[tuple[int, int], _SourceComment] = {}
-    for node in _walk(root):
-        if node.get("kind") != "FullComment":
-            continue
-        comment = _source_comment(node, default_file, source)
-        if comment is not None:
-            by_range[(comment.start_offset, comment.end_offset)] = comment
-    source_bytes = source.encode("utf-8")
-    lines = source_bytes.splitlines(keepends=True)
-    line_offsets: list[int] = []
-    offset = 0
-    for line in lines:
-        line_offsets.append(offset)
-        offset += len(line)
+    comments: list[_SourceComment] = []
     index = 0
-    while index < len(lines):
-        line = lines[index]
-        marker_indexes = [
-            position
-            for marker in (b"///", b"//!")
-            if (position := line.find(marker)) >= 0
-        ]
-        if not marker_indexes:
+    while index < len(source):
+        byte = source[index]
+        if byte in (ord('"'), ord("'")):
+            quote = byte
             index += 1
-            continue
-        marker_index = min(marker_indexes)
-        trailing = bool(line[:marker_index].strip())
-        start_index = index
-        end_index = index
-        if not trailing:
-            while end_index + 1 < len(lines):
-                next_line = lines[end_index + 1].lstrip()
-                if not next_line.startswith((b"///", b"//!")):
+            while index < len(source):
+                if source[index] == ord("\\"):
+                    index += 2
+                elif source[index] == quote:
+                    index += 1
                     break
-                end_index += 1
-        start_offset = line_offsets[start_index] + marker_index
-        end_offset = line_offsets[end_index] + len(lines[end_index].rstrip(b"\r\n"))
-        by_range[(start_offset, end_offset)] = _SourceComment(
-            start_offset,
-            end_offset,
-            start_index + 1,
-            end_index + 1,
-            _strip_document_comment(
-                source_bytes[start_offset:end_offset].decode("utf-8")
-            ),
-            SourceLocation(str(default_file), start_index + 1, marker_index + 1),
-            trailing,
-        )
-        index = end_index + 1
-    return tuple(sorted(by_range.values(), key=lambda item: item.start_offset))
+                else:
+                    index += 1
+            continue
+        if source[index : index + 2] == b"//":
+            end = _line_end(source, index)
+            if source[index : index + 3] in (b"///", b"//!"):
+                line_start = source.rfind(b"\n", 0, index) + 1
+                trailing = bool(source[line_start:index].strip())
+                comments.append(
+                    _make_source_comment(source, default_file, index, end, trailing)
+                )
+            index = end
+            continue
+        if source[index : index + 2] == b"/*":
+            close = source.find(b"*/", index + 2)
+            end = len(source) if close < 0 else close + 2
+            if source[index : index + 3] in (b"/**", b"/*!"):
+                line_start = source.rfind(b"\n", 0, index) + 1
+                trailing = bool(source[line_start:index].strip())
+                comments.append(
+                    _make_source_comment(source, default_file, index, end, trailing)
+                )
+            index = end
+            continue
+        index += 1
+
+    grouped: list[_SourceComment] = []
+    for comment in comments:
+        if (
+            grouped
+            and not grouped[-1].trailing
+            and not comment.trailing
+            and grouped[-1].end_line + 1 == comment.start_line
+        ):
+            previous = grouped.pop()
+            grouped.append(
+                _make_source_comment(
+                    source,
+                    default_file,
+                    previous.start_offset,
+                    comment.end_offset,
+                    False,
+                )
+            )
+        else:
+            grouped.append(comment)
+    return tuple(grouped)
 
 
-def _node_line_range(node: dict[str, Any], source: str) -> tuple[int, int, int]:
+def _node_line_range(node: dict[str, Any], source: bytes) -> tuple[int, int, int]:
     source_range = node.get("range", {})
     begin = source_range.get("begin", {})
     end = source_range.get("end", {})
@@ -503,7 +461,7 @@ def _node_line_range(node: dict[str, Any], source: str) -> tuple[int, int, int]:
 
 
 def _belongs_to_default_source(
-    node: dict[str, Any], default_file: Path, source: str
+    node: dict[str, Any], default_file: Path, source: bytes
 ) -> bool:
     loc = node.get("loc", {})
     if loc.get("file") is not None:
@@ -511,11 +469,10 @@ def _belongs_to_default_source(
     offset = loc.get("offset")
     token_length = int(loc.get("tokLen", 0))
     node_name = node.get("name", "")
-    source_bytes = source.encode("utf-8")
     return (
         offset is not None
         and bool(node_name)
-        and source_bytes[int(offset) : int(offset) + token_length].decode("utf-8")
+        and source[int(offset) : int(offset) + token_length].decode("utf-8")
         == node_name
     )
 
@@ -523,7 +480,7 @@ def _belongs_to_default_source(
 def _node_annotations(
     node: dict[str, Any],
     default_file: Path,
-    source: str,
+    source: bytes,
     comments: tuple[_SourceComment, ...],
 ) -> tuple[Annotation, ...]:
     if not _belongs_to_default_source(node, default_file, source):
@@ -563,14 +520,17 @@ class ClangFrontend:
         working_directory: Path | None = None,
     ) -> TranslationUnit:
         input_file = input_file.resolve()
-        source = input_file.read_text(encoding="utf-8")
+        source = input_file.read_bytes()
+        try:
+            source.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise FrontendError(f"input header is not valid UTF-8: {error}") from error
         command = [
             self.clang,
             "-x",
             "c",
             "-std=c11",
             "-fsyntax-only",
-            "-fparse-all-comments",
             "-Xclang",
             "-ast-dump=json",
             *clang_args,
@@ -594,9 +554,11 @@ class ClangFrontend:
         return self.from_json(root, input_file, source)
 
     def from_json(
-        self, root: dict[str, Any], input_file: Path, source: str
+        self, root: dict[str, Any], input_file: Path, source: bytes | str
     ) -> TranslationUnit:
-        comments = _source_comments(root, input_file, source)
+        if isinstance(source, str):
+            source = source.encode("utf-8")
+        comments = _scan_source_comments(source, input_file)
         records: list[AstRecord] = []
         typedefs: list[AstTypedef] = []
         enums: list[AstEnum] = []

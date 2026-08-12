@@ -134,7 +134,7 @@ class ClangFrontendTest(unittest.TestCase):
         self.assertEqual(fields["samples"].capacity, 2)
         self.assertEqual(fields["samples"].target.kind, AstTypeKind.FLOAT)
 
-    def test_reads_full_comment_source_ranges_without_paragraph_nodes(self) -> None:
+    def test_scans_document_comments_without_clang_comment_nodes(self) -> None:
         source = textwrap.dedent(
             """
             #include <stdbool.h>
@@ -173,7 +173,6 @@ class ClangFrontendTest(unittest.TestCase):
                 "c",
                 "-std=c11",
                 "-fsyntax-only",
-                "-fparse-all-comments",
                 "-Xclang",
                 "-ast-dump=json",
                 str(header),
@@ -184,24 +183,29 @@ class ClangFrontendTest(unittest.TestCase):
                 ).stdout
             )
 
-            def remove_comment_children(node: object) -> None:
+            def remove_comment_nodes(node: object) -> None:
                 if not isinstance(node, dict):
                     return
-                if node.get("kind") == "FullComment":
-                    node["inner"] = [
-                        {
-                            "kind": "ParagraphComment",
-                            "inner": [{"kind": "TextComment", "text": "discarded"}],
-                        }
-                    ]
-                    return
+                node["inner"] = [
+                    child
+                    for child in node.get("inner", ())
+                    if child.get("kind")
+                    not in {
+                        "FullComment",
+                        "ParagraphComment",
+                        "TextComment",
+                        "InlineCommandComment",
+                    }
+                ]
                 for child in node.get("inner", ()):
-                    remove_comment_children(child)
+                    remove_comment_nodes(child)
 
-            remove_comment_children(root)
-            unit_without_paragraph_data = frontend.from_json(root, header, source)
+            remove_comment_nodes(root)
+            unit_without_comment_ast = frontend.from_json(
+                root, header, source.encode("utf-8")
+            )
 
-        for parsed_unit in (unit, unit_without_paragraph_data):
+        for parsed_unit in (unit, unit_without_comment_ast):
             record = next(item for item in parsed_unit.records if item.name == "Vec")
             self.assertEqual(record.annotations[0].name, "jsonStruct")
             self.assertEqual(record.annotations[0].values("asarray"), (None,))
@@ -211,6 +215,27 @@ class ClangFrontendTest(unittest.TestCase):
                 item for item in parsed_unit.functions if item.name == "decodeVec"
             )
             self.assertEqual(function.annotations[0].name, "jsonDecode")
+
+    def test_ignores_comment_markers_inside_c_literals(self) -> None:
+        source = textwrap.dedent(
+            r"""
+            static const char *url = "https://example.test/// @jsonStruct";
+            static const char slash = '/';
+            /// @jsonStruct
+            typedef struct Value {
+              int field;
+            } Value;
+            """
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            header = Path(directory) / "input.h"
+            header.write_text(source, encoding="utf-8")
+            unit = ClangFrontend().parse(header)
+
+        record = next(item for item in unit.records if item.name == "Value")
+        self.assertEqual(
+            [annotation.name for annotation in record.annotations], ["jsonStruct"]
+        )
 
 
 if __name__ == "__main__":

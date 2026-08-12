@@ -1,11 +1,12 @@
 # annotation-parser
 
-`annotation-parser` 从 C 头文件、Clang JSON AST 和文档注释生成 C11 JSON decoder 与 cleanup 实现。
+`annotation-parser` 从 C 头文件生成 C11 JSON decoder 与 cleanup 实现。Python 直接读取 UTF-8 源文件字节并扫描文档注释；Clang JSON AST 只负责 C 声明和类型。
 
 ## 数据流
 
 ```text
-Clang JSON AST + documentation comments
+source bytes ──► documentation comments
+Clang JSON AST ─► C declarations and types
                │
                ▼
   structured frontend AST (`AstType` tree)
