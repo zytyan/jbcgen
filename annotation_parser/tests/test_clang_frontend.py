@@ -1,4 +1,6 @@
+import json
 import shutil
+import subprocess
 import tempfile
 import textwrap
 import unittest
@@ -131,6 +133,84 @@ class ClangFrontendTest(unittest.TestCase):
         self.assertEqual(fields["samples"].kind, AstTypeKind.ARRAY)
         self.assertEqual(fields["samples"].capacity, 2)
         self.assertEqual(fields["samples"].target.kind, AstTypeKind.FLOAT)
+
+    def test_reads_full_comment_source_ranges_without_paragraph_nodes(self) -> None:
+        source = textwrap.dedent(
+            """
+            #include <stdbool.h>
+            typedef struct json_parser json_parser;
+            typedef struct json_allocator json_allocator;
+            /* UTF-8 before offsets: 中文 */
+            /**
+             * A paragraph that Clang may split into special comment nodes.
+             * \n
+             * @jsonStruct(
+             *   asarray,
+             *   elems=elems,
+             *   len=len,
+             * )
+             */
+            typedef struct Vec {
+              int *elems;
+              unsigned long len;
+            } Vec;
+
+            /// A leading paragraph.
+            ///
+            /// @jsonDecode
+            bool decodeVec(json_parser *parser, Vec *value);
+            """
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            header = Path(directory) / "input.h"
+            header.write_text(source, encoding="utf-8")
+            frontend = ClangFrontend()
+            unit = frontend.parse(header)
+
+            command = [
+                "clang",
+                "-x",
+                "c",
+                "-std=c11",
+                "-fsyntax-only",
+                "-fparse-all-comments",
+                "-Xclang",
+                "-ast-dump=json",
+                str(header),
+            ]
+            root = json.loads(
+                subprocess.run(
+                    command, capture_output=True, text=True, check=True
+                ).stdout
+            )
+
+            def remove_comment_children(node: object) -> None:
+                if not isinstance(node, dict):
+                    return
+                if node.get("kind") == "FullComment":
+                    node["inner"] = [
+                        {
+                            "kind": "ParagraphComment",
+                            "inner": [{"kind": "TextComment", "text": "discarded"}],
+                        }
+                    ]
+                    return
+                for child in node.get("inner", ()):
+                    remove_comment_children(child)
+
+            remove_comment_children(root)
+            unit_without_paragraph_data = frontend.from_json(root, header, source)
+
+        for parsed_unit in (unit, unit_without_paragraph_data):
+            record = next(item for item in parsed_unit.records if item.name == "Vec")
+            self.assertEqual(record.annotations[0].name, "jsonStruct")
+            self.assertEqual(record.annotations[0].values("asarray"), (None,))
+            self.assertEqual(record.annotations[0].values("elems"), ("elems",))
+            self.assertEqual(record.annotations[0].values("len"), ("len",))
+            function = next(
+                item for item in parsed_unit.functions if item.name == "decodeVec"
+            )
+            self.assertEqual(function.annotations[0].name, "jsonDecode")
 
 
 if __name__ == "__main__":
